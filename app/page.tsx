@@ -52,6 +52,7 @@ function mergePendingSales(products: Product[], sales: any[], pending: OfflineSa
 }
 
 export default function Home() {
+  const isDemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   const [account, setAccount] = useState<any>(null);
   const [authReady, setAuthReady] = useState(false);
   const [section, setSection] = useState('Punto de venta');
@@ -100,7 +101,13 @@ export default function Home() {
   }, []);
   useEffect(() => {
     const cached = localValue<any>(OFFLINE_SNAPSHOT, null);
-    fetch('/api/auth', { cache: 'no-store' }).then(async response => {
+    const openSession = isDemo
+      ? fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'demo-login' }) })
+      : Promise.resolve();
+    openSession.then(response => {
+      if (response && !response.ok) throw new Error('No fue posible abrir la demostración');
+      return fetch('/api/auth', { cache: 'no-store' });
+    }).then(async response => {
       if (!response.ok) throw new Error('Sin conexión');
       return response.json();
     }).then(data => {
@@ -138,7 +145,7 @@ export default function Home() {
       setOnline(false);
       setAuthReady(true);
     });
-  }, []);
+  }, [isDemo]);
   useEffect(() => {
     if (!businessReady || !account) return;
     const offlineProducts = products.map(product => ({ ...product, image: '' }));
@@ -284,7 +291,7 @@ export default function Home() {
   const addRepair = () => { if (!repairForm.customer || !repairForm.device || !repairForm.problem) return; setRepairs((old) => [{ id: `R-${1050 + old.length}`, customer: repairForm.customer, phone: repairForm.phone || 'Sin teléfono', device: repairForm.device, problem: repairForm.problem, tech: 'Por asignar', status: 'Recibido', total: 0, deposit: Number(repairForm.deposit) || 0 }, ...old]); setCash((v) => v + (Number(repairForm.deposit) || 0)); setShowRepair(false); setRepairForm({ customer: '', phone: '', device: '', problem: '', deposit: '' }); setNotice('Orden de reparación creada y anticipo registrado.'); };
   const changeRepair = (id: string) => setRepairs((old) => old.map((r) => r.id === id ? { ...r, status: r.status === 'Recibido' ? 'Diagnóstico' : r.status === 'Diagnóstico' ? 'En reparación' : r.status === 'En reparación' ? 'Listo' : 'Listo' } : r));
 
-  if (!authReady) return <main className="auth-shell"><div className="auth-card"><img className="auth-brand" src="/cellhouse-logo-192.png?v=151a801" alt="DitaEssencePos" /><b>DitaEssencePos</b><p>Preparando acceso seguro…</p></div></main>;
+  if (!authReady) return isDemo ? <main className="auth-shell demo-boot" aria-label="Abriendo demostración" /> : <main className="auth-shell"><div className="auth-card"><img className="auth-brand" src="/cellhouse-logo-192.png?v=151a801" alt="DitaEssencePos" /><b>DitaEssencePos</b><p>Preparando acceso seguro…</p></div></main>;
   if (!account) return <Login onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; skipBusinessSave.current = true; serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(sessionData?.businessState?.sales || []); setCategories(categoryNames(loadedProducts, sessionData?.businessState?.categories || [])); setReceiptSettings(normalizeReceiptSettings(sessionData?.businessState?.receiptSettings)); setBusinessReady(true); }} />;
   const logout = async () => { try { await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }); } catch { /* También permite salir sin conexión. */ } window.localStorage.removeItem(OFFLINE_SNAPSHOT); setBusinessReady(false); setAccount(null); setProducts([]); setCategories([]); setReceiptSettings(DEFAULT_RECEIPT_SETTINGS); setSalesHistory([]); setCart({}); setCartPrices({}); };
   return <main className="app-shell min-h-screen bg-[#f5f7fa] text-slate-950">

@@ -4,6 +4,10 @@ import { DEFAULT_RECEIPT_SETTINGS, receiptSettings } from '../../receipt-setting
 
 const SESSION = 'cellhouse_session';
 const SETUP_TOKEN = process.env.SETUP_TOKEN?.trim() || '';
+// Solo se habilita en la instalación aislada que usamos como demostración.
+// Las instalaciones de clientes no definen esta variable y conservan su acceso
+// normal con usuario y contraseña.
+const DEMO_MODE = process.env.DEMO_MODE === 'true';
 const defaultPermissions = ['Punto de venta', 'Inventario', 'Caja y movimientos'];
 const servicePermission = 'Órdenes de servicio';
 const returnsPermission = 'Devoluciones y ajustes';
@@ -308,6 +312,16 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
   await tables(); const data = await request.json<any>();
+  if (data.action === 'demo-login') {
+    if (!DEMO_MODE) return json({ error: 'La demostración no está disponible en esta instalación.' }, 404);
+    let user = await env.DB.prepare("SELECT * FROM pos_users WHERE username='demostracion'").first<any>();
+    if (!user) {
+      const created = await env.DB.prepare('INSERT INTO pos_users (name, username, password_hash, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind('Demostración', 'demostracion', await hashPassword(token()), 'owner', '[]', now()).run();
+      user = { id: created.meta.last_row_id, name: 'Demostración', username: 'demostracion', role: 'owner', permissions: '[]' };
+    }
+    const safeUser = { id: user.id, name: user.name, username: user.username, role: user.role, permissions: JSON.parse(user.permissions || '[]') };
+    return json({ user: safeUser, cashShift: await activeCashShift(safeUser) }, 200, { 'Set-Cookie': await session(Number(user.id)) });
+  }
   if (['create-technician-settlement','pay-technician-settlements'].includes(data.action)) {
     const actor=await current(request);
     if(!actor || actor.role!=='owner') return json({error:'Solo el propietario puede liquidar y pagar.'},403);
