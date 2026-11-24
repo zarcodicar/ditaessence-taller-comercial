@@ -1,0 +1,9 @@
+.git
+.next
+.vinext
+.wrangler
+dist
+node_modules
+.env*
+*.tar.gz
+.codex-stage-*
