@@ -60,7 +60,7 @@ async function initializeTables() {
   // conservan dentro del negocio inicial (id 1); todavía no se habilita la
   // creación de clientes nuevos hasta que todas las operaciones estén aisladas.
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_businesses (id BIGSERIAL PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', plan TEXT NOT NULL DEFAULT 'monthly', expires_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
-  await env.DB.prepare("INSERT INTO pos_businesses (id,code,name,status,plan,created_at,updated_at) VALUES (1,'demo-taller','DitaEssence Taller','active','demo',?,?) ON CONFLICT (id) DO NOTHING").bind(now(),now()).run();
+  await env.DB.prepare("INSERT INTO pos_businesses (id,code,name,status,plan,created_at,updated_at) VALUES (1,'demo-dtc-stage','DTC Stage','active','demo',?,?) ON CONFLICT (id) DO NOTHING").bind(now(),now()).run();
   await ensureLedger(env.DB);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS pos_service_photos (id BIGSERIAL PRIMARY KEY,order_id BIGINT NOT NULL,image TEXT NOT NULL)').run();
   await env.DB.batch([
@@ -91,7 +91,7 @@ async function initializeTables() {
   // Solo cambia el nombre heredado de la demostración comercial. Los negocios
   // reales que tengan un nombre propio no se modifican.
   try {
-    await env.DB.prepare("UPDATE pos_business_state SET receipt_settings=jsonb_set(COALESCE(NULLIF(receipt_settings,'')::jsonb,'{}'::jsonb),'{businessName}','\"DitaEssence Taller\"'::jsonb,true) WHERE id=1 AND lower(COALESCE(receipt_settings,'')) ~ '(cellhouse|sellhost|sell host)'").run();
+    await env.DB.prepare("UPDATE pos_business_state SET receipt_settings=jsonb_set(COALESCE(NULLIF(receipt_settings,'')::jsonb,'{}'::jsonb),'{businessName}','\"DTC Stage\"'::jsonb,true) WHERE id=1 AND lower(COALESCE(receipt_settings,'')) ~ '(cellhouse|sellhost|sell host|ditaessence taller)'").run();
   } catch { /* Una configuración antigua no debe impedir iniciar el POS. */ }
   // También actualiza instalaciones locales que se crearon antes del centro de notificaciones.
   for (const statement of ["ALTER TABLE pos_notifications ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'", 'ALTER TABLE pos_notifications ADD COLUMN entity_type TEXT', 'ALTER TABLE pos_notifications ADD COLUMN entity_id TEXT', "ALTER TABLE pos_notifications ADD COLUMN details TEXT NOT NULL DEFAULT '{}' "]) {
@@ -707,7 +707,7 @@ export async function POST(request: Request) {
     const saved = await env.DB.prepare("SELECT password_hash FROM pos_users WHERE id=? AND role='owner'").bind(owner.id).first<{ password_hash: string }>();
     if (!saved || !(await validPassword(String(data.currentPassword || ''), saved.password_hash))) return json({ error: 'La contraseña actual no es correcta.' }, 401);
     const backup = data.backup; const payload = backup?.data;
-    if (backup?.format !== 'cellhouse-pos-backup' || ![1,2,3,4,5,6].includes(Number(backup?.version)) || !payload || !Array.isArray(payload.users) || !Array.isArray(payload.businessState)) return json({ error: 'El archivo no es un respaldo válido de DitaEssence Taller.' }, 400);
+    if (backup?.format !== 'cellhouse-pos-backup' || ![1,2,3,4,5,6].includes(Number(backup?.version)) || !payload || !Array.isArray(payload.users) || !Array.isArray(payload.businessState)) return json({ error: 'El archivo no es un respaldo válido de DTC Stage.' }, 400);
     if (!payload.users.some((item: any) => item?.role === 'owner')) return json({ error: 'El respaldo no contiene una cuenta de propietario.' }, 400);
     const statements = [
       env.DB.prepare('DELETE FROM pos_returns'), env.DB.prepare('DELETE FROM pos_service_photos'), env.DB.prepare('DELETE FROM pos_technician_settlement_items'), env.DB.prepare('DELETE FROM pos_technician_settlements'), env.DB.prepare('DELETE FROM pos_service_parts'), env.DB.prepare('DELETE FROM pos_service_payments'), env.DB.prepare('DELETE FROM pos_service_order_events'), env.DB.prepare('DELETE FROM pos_service_orders'), env.DB.prepare('DELETE FROM pos_service_technician_commissions'), env.DB.prepare('DELETE FROM pos_service_settings'), env.DB.prepare('DELETE FROM pos_employees'), env.DB.prepare('DELETE FROM pos_cash_movements'), env.DB.prepare('DELETE FROM pos_cash_shifts'), env.DB.prepare('DELETE FROM pos_notifications'), env.DB.prepare('DELETE FROM pos_synced_sales'), env.DB.prepare('DELETE FROM pos_business_state'), env.DB.prepare('DELETE FROM pos_sessions'), env.DB.prepare('DELETE FROM pos_users'),

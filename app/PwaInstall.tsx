@@ -30,5 +30,5 @@ export function PwaInstallButton({ full = false }: { full?: boolean }) {
     window.alert(apple ? 'En iPhone: toca Compartir y luego “Agregar a pantalla de inicio”.' : 'Abre el menú del navegador y elige “Instalar aplicación” o “Agregar a pantalla de inicio”.');
   };
 
-  return <button type="button" className={`pwa-install ${full ? 'is-full' : ''}`} onClick={() => void install()} aria-label="Instalar DitaEssence Taller como aplicación">{full ? <Smartphone /> : <Download />}<span>Instalar app</span></button>;
+  return <button type="button" className={`pwa-install ${full ? 'is-full' : ''}`} onClick={() => void install()} aria-label="Instalar DTC Stage como aplicación">{full ? <Smartphone /> : <Download />}<span>Instalar app</span></button>;
 }

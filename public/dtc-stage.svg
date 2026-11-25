@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title>DTC Stage</title>
+  <defs>
+    <linearGradient id="background" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1688E8"/>
+      <stop offset="1" stop-color="#082B58"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <rect x="132" y="105" width="205" height="302" rx="30" fill="none" stroke="#FFFFFF" stroke-width="30"/>
+  <path d="M201 174h69c38 0 63 25 63 62s-25 62-63 62h-69V174Zm46 38v48h19c14 0 23-8 23-24s-9-24-23-24h-19Z" fill="#FFFFFF"/>
+  <path d="m344 307 47 47-37 37-47-47 14-14-40-40 22-22 40 40 1-1Z" fill="#8FEAFF"/>
+  <circle cx="234" cy="359" r="11" fill="#8FEAFF"/>
+</svg>

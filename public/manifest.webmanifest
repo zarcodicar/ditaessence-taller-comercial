@@ -1,7 +1,7 @@
 {
-  "name": "DitaEssence Taller",
-  "short_name": "DitaTaller",
-  "description": "Punto de venta y servicio técnico para tiendas de celulares.",
+  "name": "DTC Stage",
+  "short_name": "DTC Stage",
+  "description": "Punto de venta y servicio técnico para negocios de tecnología.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -11,6 +11,6 @@
   "lang": "es-CO",
   "categories": ["business", "finance", "productivity"],
   "icons": [
-    { "src": "/ditaessence-taller.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/dtc-stage.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }

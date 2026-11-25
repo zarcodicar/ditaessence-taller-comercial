@@ -57,7 +57,7 @@ function CashCloseReceipt({ receipt, onClose }: { receipt: Closure; onClose: () 
   const closedAt = new Date(receipt.closed_at).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
   return <div className="cash-close-receipt-backdrop" role="dialog" aria-modal="true" aria-label={`Comprobante de cierre ${receipt.id}`} onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="cash-close-receipt print-receipt">
-      <header><div><b>DitaEssence Taller</b><h2>Comprobante de cierre de caja</h2><p>Turno #{receipt.id}</p></div><button className="cash-receipt-close" aria-label="Cerrar comprobante" onClick={onClose}><X /></button></header>
+      <header><div><b>DTC Stage</b><h2>Comprobante de cierre de caja</h2><p>Turno #{receipt.id}</p></div><button className="cash-receipt-close" aria-label="Cerrar comprobante" onClick={onClose}><X /></button></header>
       <div className="cash-receipt-meta"><div><span>Apertura</span><b>{openedAt}</b><small>{receipt.opened_by_name}</small></div><div><span>Cierre</span><b>{closedAt}</b><small>{receipt.closed_by_name}</small></div></div>
       <div className="cash-receipt-values">
         <p><span>Ventas registradas</span><b>{Number(receipt.sales_count || 0)}</b></p><p><span>Unidades vendidas</span><b>{Number(receipt.units_sold || 0)}</b></p>
