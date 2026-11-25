@@ -1,7 +1,7 @@
 // Cambia de versión para que las aplicaciones instaladas abandonen el shell
 // anterior cuando se publica una actualización de interfaz.
 const CACHE = 'ditaessencepos-shell-v6';
-const SHELL = ['/', '/manifest.webmanifest', '/cellhouse-logo-192.png?v=151a801', '/cellhouse-logo-512.png?v=151a801', '/cellhouse-logo-maskable-512.png?v=151a801'];
+const SHELL = ['/', '/manifest.webmanifest', '/ditaessence-taller.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

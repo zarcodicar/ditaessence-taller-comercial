@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title>DitaEssence Taller</title>
+  <defs>
+    <linearGradient id="background" x1="72" y1="48" x2="440" y2="472" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2299EE"/>
+      <stop offset="1" stop-color="#0A3264"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <path d="M150 136h96c79 0 128 47 128 120s-49 120-128 120h-96V136Zm77 65v110h20c34 0 53-19 53-55s-19-55-53-55h-20Z" fill="#fff"/>
+  <path d="m349 321 54 54-38 38-54-54-28 10-45-45 22-22 45 45 10-26 34-34Z" fill="#9BE7FF"/>
+  <circle cx="365" cy="382" r="9" fill="#0A3264"/>
+</svg>

@@ -10,7 +10,7 @@ const dateTime = (value: string) => value ? new Intl.DateTimeFormat('es-CO', { d
 function ReceiptCopy({ receipt, settings, copy }: any) {
   const service = receipt.return_type === 'service_refund';
   return <article className="returns-receipt-copy">
-    <header>{copy && <span className="returns-copy-label">{copy}</span>}<b>{settings?.businessName || 'DitaEssencePos'}</b><small>{settings?.address || ''}{settings?.phone ? ` · Tel. ${settings.phone}` : ''}</small><h3>COMPROBANTE DE DEVOLUCIÓN</h3><strong>{service ? `ORDEN DE SERVICIO ${receipt.source_number}` : `VENTA ${receipt.source_number}`}</strong></header>
+    <header>{copy && <span className="returns-copy-label">{copy}</span>}<b>{settings?.businessName || 'DitaEssence Taller'}</b><small>{settings?.address || ''}{settings?.phone ? ` · Tel. ${settings.phone}` : ''}</small><h3>COMPROBANTE DE DEVOLUCIÓN</h3><strong>{service ? `ORDEN DE SERVICIO ${receipt.source_number}` : `VENTA ${receipt.source_number}`}</strong></header>
     <div className="returns-receipt-meta">
       <p><span>Fecha y hora</span><b>{dateTime(receipt.created_at)}</b></p><p><span>Responsable</span><b>{receipt.actor_name}</b></p><p><span>Medio de devolución</span><b>{receipt.payment_method}</b></p>
       {receipt.customer && <p><span>Cliente</span><b>{receipt.customer}</b></p>}{receipt.phone && <p><span>Teléfono</span><b>{receipt.phone}</b></p>}{receipt.device && <p><span>Equipo</span><b>{receipt.device}</b></p>}

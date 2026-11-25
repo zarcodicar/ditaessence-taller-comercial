@@ -7,7 +7,7 @@ export type ReceiptSettings = {
 };
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
-  businessName: 'DitaEssencePos',
+  businessName: 'DitaEssence Taller',
   phone: '3157801078',
   address: 'Carrera 13 # 72-71',
   thankYou: 'Gracias por su compra',

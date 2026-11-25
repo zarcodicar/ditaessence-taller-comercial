@@ -2135,7 +2135,7 @@ function ServiceReceipt({ order, settings, copy }: any) {
   return (
     <section className="service-receipt print-receipt">
       <header>
-        <img className="service-receipt-logo" src="/cellhouse-logo-192.png?v=151a801" alt="Logo de DitaEssencePos" />
+        <img className="service-receipt-logo" src="/ditaessence-taller.svg" alt="Logo de DitaEssence Taller" />
         <b>{settings.businessName}</b>
         {settings.address && <span>{settings.address}</span>}
         {settings.phone && <span>Tel. {settings.phone}</span>}
