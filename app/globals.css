@@ -678,6 +678,33 @@ main.min-h-screen .payroll-receipt>header,.payroll-receipt>header{border:0!impor
 .payroll-modal-fields>.payroll-modal-note{grid-column:1/-1;grid-row:3}
 @media(max-width:700px){.payroll-history-row{grid-template-columns:minmax(0,1fr) auto}.payroll-history-row .button{grid-column:1/-1}.payroll-modal-fields{grid-template-columns:1fr}.payroll-modal-fields>label:first-child,.payroll-modal-fields>.payroll-payment-method,.payroll-modal-fields>.payroll-date-range,.payroll-modal-fields>.payroll-modal-note{grid-column:auto;grid-row:auto}.payroll-modal-fields>.payroll-date-range{grid-template-columns:1fr}}
 
+/* Fuente única del POS. Se usa una familia instalada en Windows y con buenos
+   pesos nativos para que botones, tablas y formularios no se vean borrosos. */
+:root {
+  --dita-ui-font: "Segoe UI Variable Text", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-geist-sans: var(--dita-ui-font);
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--dita-ui-font) !important;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fuerza una misma tipografía para componentes añadidos en distintos módulos,
+   sin alterar los códigos o comprobantes que usan fuente monoespaciada. */
+body :not(code):not(pre):not(kbd):not(samp) {
+  font-family: var(--dita-ui-font) !important;
+  font-synthesis: none;
+}
+
 /* En móviles el carrito sigue el flujo natural de la página. */
 @media(max-width:700px){.pos-cart{position:static;height:auto;min-height:0}.pos-lines{overflow:visible}.pos-summary>.pos-split-payments{grid-template-columns:1fr!important}.pos-split-payments label{grid-template-columns:minmax(0,1fr) 8rem;gap:.6rem;font-size:.78rem}}
 
