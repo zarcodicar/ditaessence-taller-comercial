@@ -55,6 +55,12 @@ async function validPassword(password: string, saved: string) {
 let schemaReady:Promise<void>|null=null;
 async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>{schemaReady=null;throw e});await schemaReady;}
 async function initializeTables() {
+  // La instalación comercial usa una sola aplicación, pero cada negocio tendrá
+  // una identidad y datos propios. Por ahora todos los registros históricos se
+  // conservan dentro del negocio inicial (id 1); todavía no se habilita la
+  // creación de clientes nuevos hasta que todas las operaciones estén aisladas.
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_businesses (id BIGSERIAL PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', plan TEXT NOT NULL DEFAULT 'monthly', expires_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+  await env.DB.prepare("INSERT INTO pos_businesses (id,code,name,status,plan,created_at,updated_at) VALUES (1,'demo-taller','DitaEssence Taller','active','demo',?,?) ON CONFLICT (id) DO NOTHING").bind(now(),now()).run();
   await ensureLedger(env.DB);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS pos_service_photos (id BIGSERIAL PRIMARY KEY,order_id BIGINT NOT NULL,image TEXT NOT NULL)').run();
   await env.DB.batch([
@@ -76,6 +82,17 @@ async function initializeTables() {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_returns (id BIGSERIAL PRIMARY KEY, return_type TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL, source_number TEXT NOT NULL, amount INTEGER NOT NULL, payment_method TEXT NOT NULL, reason TEXT NOT NULL, restock INTEGER NOT NULL DEFAULT 0, items TEXT NOT NULL DEFAULT '[]', actor_name TEXT NOT NULL, shift_id INTEGER, created_at TEXT NOT NULL)"),
   ]);
   await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_cash_shifts_single_open ON pos_cash_shifts(status) WHERE status='open'").run();
+  // Migración aditiva y reversible: conserva los datos existentes bajo el
+  // negocio inicial. Las rutas se irán acotando por business_id antes de abrir
+  // el aprovisionamiento comercial.
+  for (const table of ['pos_users','pos_employees','pos_sessions','pos_notifications','pos_cash_shifts','pos_cash_movements','pos_business_state','pos_synced_sales','pos_service_orders','pos_service_order_events','pos_service_payments','pos_service_parts','pos_service_settings','pos_service_technician_commissions','pos_employee_payroll','pos_returns','pos_service_photos','pos_technician_settlements','pos_technician_settlement_items']) {
+    try { await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN business_id BIGINT NOT NULL DEFAULT 1`).run(); } catch { /* La columna ya existe. */ }
+  }
+  // Solo cambia el nombre heredado de la demostración comercial. Los negocios
+  // reales que tengan un nombre propio no se modifican.
+  try {
+    await env.DB.prepare("UPDATE pos_business_state SET receipt_settings=jsonb_set(COALESCE(NULLIF(receipt_settings,'')::jsonb,'{}'::jsonb),'{businessName}','\"DitaEssence Taller\"'::jsonb,true) WHERE id=1 AND lower(COALESCE(receipt_settings,'')) ~ '(cellhouse|sellhost|sell host)'").run();
+  } catch { /* Una configuración antigua no debe impedir iniciar el POS. */ }
   // También actualiza instalaciones locales que se crearon antes del centro de notificaciones.
   for (const statement of ["ALTER TABLE pos_notifications ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'", 'ALTER TABLE pos_notifications ADD COLUMN entity_type TEXT', 'ALTER TABLE pos_notifications ADD COLUMN entity_id TEXT', "ALTER TABLE pos_notifications ADD COLUMN details TEXT NOT NULL DEFAULT '{}' "]) {
     try { await env.DB.prepare(statement).run(); } catch { /* La columna ya existe. */ }
