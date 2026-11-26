@@ -48,6 +48,7 @@ const emptyForm = {
   customerName: '',
   customerPhone: '',
   customerDocument: '',
+  deviceType: 'Celular',
   deviceBrand: '',
   deviceModel: '',
   deviceIdentifier: '',
@@ -220,6 +221,7 @@ export function ServiceOrders({
           device_model: form.deviceModel,
           reported_issue: form.reportedIssue,
           status: 'Pendiente de sincronizar',
+          device_type: form.deviceType,
           paid_total: 0,
           estimated_total: Number(form.estimatedTotal || 0),
           created_at: new Date().toISOString(),
@@ -1247,6 +1249,13 @@ function ServiceForm({ form, setForm, orders, close, save, busy, formError, clea
           {formError && <p className="service-form-error" role="alert">{formError}</p>}
           <span />
           <h4>Equipo</h4>
+          <label>
+            Tipo de dispositivo
+            <select value={form.deviceType} onChange={(event) => setForm({ ...form, deviceType: event.target.value })}>
+              <option>Celular</option><option>Computador portátil</option><option>Computador de escritorio</option><option>Tablet</option><option>Consola</option><option>Otro</option>
+            </select>
+          </label>
+          <span />
           <DeviceMemoryField
             field="deviceBrand"
             label="Marca"

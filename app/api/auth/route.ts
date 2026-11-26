@@ -109,6 +109,7 @@ async function initializeTables() {
     try { await env.DB.prepare(statement).run(); } catch { /* La columna ya existe. */ }
   }
   try { await env.DB.prepare('ALTER TABLE pos_service_orders ADD COLUMN client_ref TEXT').run(); } catch { /* La columna ya existe. */ }
+  try { await env.DB.prepare("ALTER TABLE pos_service_orders ADD COLUMN device_type TEXT NOT NULL DEFAULT 'Celular'").run(); } catch { /* La columna ya existe. */ }
   for (const statement of ["ALTER TABLE pos_service_orders ADD COLUMN technician_user_id INTEGER", "ALTER TABLE pos_service_orders ADD COLUMN technician_name TEXT NOT NULL DEFAULT ''", "ALTER TABLE pos_service_orders ADD COLUMN commission_percent REAL", "ALTER TABLE pos_service_orders ADD COLUMN commission_base INTEGER", "ALTER TABLE pos_service_orders ADD COLUMN commission_amount INTEGER", "ALTER TABLE pos_service_orders ADD COLUMN commission_status TEXT NOT NULL DEFAULT 'not_applicable'", "ALTER TABLE pos_service_orders ADD COLUMN commission_settled_at TEXT", "ALTER TABLE pos_service_orders ADD COLUMN commission_paid_at TEXT", "ALTER TABLE pos_service_orders ADD COLUMN commission_paid_by_name TEXT"]) {
     try { await env.DB.prepare(statement).run(); } catch { /* La columna ya existe. */ }
   }
@@ -140,12 +141,12 @@ async function initializeTables() {
 function cookie(request: Request) { return request.headers.get('cookie')?.split(';').map(item => item.trim()).find(item => item.startsWith(`${SESSION}=`))?.slice(SESSION.length + 1); }
 async function current(request: Request) {
   const id = cookie(request); if (!id) return null;
-  const row = await env.DB.prepare('SELECT u.id, u.name, u.username, u.role, u.permissions FROM pos_sessions s JOIN pos_users u ON u.id=s.user_id WHERE s.id=? AND s.expires_at>?').bind(id, now()).first<any>();
-  return row ? { ...row, permissions: JSON.parse(row.permissions || '[]') } : null;
+  const row = await env.DB.prepare('SELECT u.id, u.name, u.username, u.role, u.permissions, s.business_id FROM pos_sessions s JOIN pos_users u ON u.id=s.user_id AND u.business_id=s.business_id WHERE s.id=? AND s.expires_at>?').bind(id, now()).first<any>();
+  return row ? { ...row, businessId: Number(row.business_id || 1), permissions: JSON.parse(row.permissions || '[]') } : null;
 }
-async function session(userId: number) {
+async function session(userId: number, businessId = 1) {
   const id = token(); const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
-  await env.DB.prepare('INSERT INTO pos_sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)').bind(id, userId, expiresAt, now()).run();
+  await env.DB.prepare('INSERT INTO pos_sessions (id, user_id, business_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').bind(id, userId, businessId, expiresAt, now()).run();
   return `${SESSION}=${id}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=43200`;
 }
 
@@ -162,7 +163,7 @@ function canUseReturns(user: any) {
 function canSeeCashTotals(user: any) { return user?.role === 'owner' || user?.permissions?.includes('Ver indicadores financieros'); }
 async function activeCashShift(user: any) {
   if (!user) return null;
-  const shift = await env.DB.prepare("SELECT * FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>();
+  const shift = await env.DB.prepare("SELECT * FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(user.businessId || 1).first<any>();
   if (!shift) return null;
   if (!canSeeCashTotals(user)) return { id: shift.id, status: shift.status, opened_by_user_id: shift.opened_by_user_id, opened_by_name: shift.opened_by_name, opened_at: shift.opened_at };
   const movements = await env.DB.prepare('SELECT id, shift_id, type, amount, reason, actor_name, created_at FROM pos_cash_movements WHERE shift_id=? ORDER BY id DESC').bind(shift.id).all<any>();
@@ -487,7 +488,8 @@ export async function POST(request: Request) {
       if (initialPayment > 0 && !cashShift) throw new Error('Abre caja antes de registrar un abono.');
       const next = await db.prepare('SELECT COALESCE(MAX(id),0)+1 AS number FROM pos_service_orders').first<any>();
       const orderNumber = String(Number(next?.number || 1)).padStart(3, '0');
-      const insert = await db.prepare(`INSERT INTO pos_service_orders (order_number,customer_name,customer_phone,customer_document,device_brand,device_model,device_identifier,device_password,accessories,physical_condition,reported_issue,planned_service,notes,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at,client_ref,technician_user_id,technician_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'Recibido',?,?,?,?,?,?,?, ?,NULL,'')`).bind(orderNumber,String(data.customerName).trim(),String(data.customerPhone).trim(),String(data.customerDocument||'').trim(),String(data.deviceBrand).trim(),String(data.deviceModel).trim(),String(data.deviceIdentifier||'').trim(),String(data.devicePassword||'').trim(),String(data.accessories||'').trim(),String(data.physicalCondition||'').trim(),String(data.reportedIssue||'').trim(),String(data.plannedService||'').trim(),String(data.notes||'').trim(),Math.max(0,Math.round(Number(data.estimatedTotal)||0)),Math.max(0,Math.round(Number(data.partsCost)||0)),Math.max(0,Math.round(Number(data.finalTotal)||0)),actor.id,actor.name,createdAt,createdAt,clientRef).run();
+      const deviceType = ['Celular','Computador portátil','Computador de escritorio','Tablet','Consola','Otro'].includes(String(data.deviceType)) ? String(data.deviceType) : 'Celular';
+      const insert = await db.prepare(`INSERT INTO pos_service_orders (order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,device_password,accessories,physical_condition,reported_issue,planned_service,notes,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at,client_ref,technician_user_id,technician_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Recibido',?,?,?,?,?,?,?, ?,NULL,'')`).bind(orderNumber,String(data.customerName).trim(),String(data.customerPhone).trim(),String(data.customerDocument||'').trim(),deviceType,String(data.deviceBrand).trim(),String(data.deviceModel).trim(),String(data.deviceIdentifier||'').trim(),String(data.devicePassword||'').trim(),String(data.accessories||'').trim(),String(data.physicalCondition||'').trim(),String(data.reportedIssue||'').trim(),String(data.plannedService||'').trim(),String(data.notes||'').trim(),Math.max(0,Math.round(Number(data.estimatedTotal)||0)),Math.max(0,Math.round(Number(data.partsCost)||0)),Math.max(0,Math.round(Number(data.finalTotal)||0)),actor.id,actor.name,createdAt,createdAt,clientRef).run();
       const id = Number(insert.meta.last_row_id);
       for(const photo of photos)await db.prepare('INSERT INTO pos_service_photos (order_id,image) VALUES (?,?)').bind(id,photo).run();
       await db.prepare('UPDATE pos_service_orders SET estimated_delivery_at=? WHERE id=?').bind(promised||null,id).run();
