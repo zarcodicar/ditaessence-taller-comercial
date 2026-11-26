@@ -88,7 +88,6 @@ async function seedDemoData() {
         const createdAt = now();
         const [orderNumber, customerName, customerPhone, customerDocument, deviceType, deviceBrand, deviceModel, deviceIdentifier, physicalCondition, reportedIssue, plannedService, status, estimatedTotal, partsCost, finalTotal] = item;
         const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,String(orderNumber || ''),String(customerName || ''),String(customerPhone || ''),String(customerDocument || ''),String(deviceType || 'Otro'),String(deviceBrand || ''),String(deviceModel || ''),String(deviceIdentifier || ''),String(physicalCondition || ''),String(reportedIssue || ''),String(plannedService || ''),String(status || 'Recibido'),Number(estimatedTotal || 0),Number(partsCost || 0),Number(finalTotal || 0),1,'Demostración',createdAt,createdAt).run();
-        await db.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,to_status,note,actor_name,created_at) VALUES (? ,?,'Creación',?,'Equipo recibido y orden creada para demostración.','Demostración',?)").bind(businessId,Number(created.meta.last_row_id || 0),String(status || 'Recibido'),createdAt).run();
       }
     }
   });
