@@ -57,9 +57,10 @@ async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>
 const demoProducts = [
   { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: 'https://i5.walmartimages.com/asr/7c30a1e2-f4fa-4e7f-8c11-c63c3ab2ed87.0bb3eccd0ccd340928bb9078b4fd91b0.jpeg' },
   { id: 102, name: 'Cargador USB-C reforzado 25 W', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores', image: 'https://storage.googleapis.com/bpv/charger-usb-cable-type-c-white-isolated-background.exact1600w.jpg' },
-  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: 'https://assets.spares.nu/products/gallery/7aa96723-8709-4036-9843-5d55f19e8dca.jpg' },
+  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: '/demo-products/vidrio-templado-a54.png' },
+  { id: 104, name: 'Audífonos inalámbricos Bluetooth', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio', image: '/demo-products/audifonos-bluetooth.png' },
   { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: 'https://codiworldwide.com/cdn/shop/files/product_i13_6.1_bumper_black_01.png?v=1737131669' },
-  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores', image: 'https://kmartau.mo.cloudinary.net/c7c3d531-a2d6-41f2-8531-d2655f85231a.jpg?tx=w_3840%2Ch_3840' },
+  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores', image: '/demo-products/mouse-inalambrico.png' },
 ];
 const demoSales = [
   { clientId: 'demo-sale-001', number: 'V-00001', createdAt: '2026-11-26T09:14:00.000Z', date: '2026-11-26', payment: 'Efectivo', paymentBreakdown: { Efectivo: 67000 }, total: 67000, items: [{ id: 101, name: 'Cable USB-C reforzado 1 m', qty: 1, price: 18000, originalPrice: 18000, cost: 8500 }, { id: 102, name: 'Cargador rápido 25 W USB-C', qty: 1, price: 49000, originalPrice: 49000, cost: 28000 }] },
@@ -73,16 +74,17 @@ async function seedDemoData() {
     const state = await db.prepare('SELECT products,sales FROM pos_business_state WHERE business_id=? FOR UPDATE').bind(businessId).first<any>();
     const savedProducts = JSON.parse(state?.products || '[]');
     if (!savedProducts.length) {
-      await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
+      await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Audio','Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
     } else {
       // El catálogo de prueba se mantiene coherente con las fotografías
       // correspondientes a cada producto mostrado al visitante.
-      const hydratedProducts = savedProducts.map((product: any) => {
-        const example = demoProducts.find(item => item.id === Number(product.id));
-        return example ? { ...product, image: example.image, name: example.name } : null;
-      }).filter(Boolean);
+      const hydratedProducts = [
+        ...demoProducts.map(example => ({ ...(savedProducts.find((product: any) => Number(product.id) === example.id) || example), image: example.image, name: example.name })),
+        ...savedProducts.filter((product: any) => !demoProducts.some(example => example.id === Number(product.id))),
+      ];
       const hydratedSales = JSON.parse(state?.sales || '[]').filter((sale: any) => sale.clientId !== 'demo-sale-002');
-      if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts) || hydratedSales.length !== JSON.parse(state?.sales || '[]').length) await db.prepare('UPDATE pos_business_state SET products=?,sales=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),JSON.stringify(hydratedSales),now(),businessId).run();
+      const categories = [...new Set(hydratedProducts.map((product: any) => String(product.category || '').trim()).filter(Boolean))].sort();
+      if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts) || hydratedSales.length !== JSON.parse(state?.sales || '[]').length) await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),JSON.stringify(hydratedSales),JSON.stringify(categories),now(),businessId).run();
     }
     const shift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
     if (!shift) await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',200000,87000,97000,47000,4,6,0,0,?)").bind(businessId,now()).run();
