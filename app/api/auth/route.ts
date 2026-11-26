@@ -54,6 +54,44 @@ async function validPassword(password: string, saved: string) {
 }
 let schemaReady:Promise<void>|null=null;
 async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>{schemaReady=null;throw e});await schemaReady;}
+const demoProducts = [
+  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables' },
+  { id: 102, name: 'Cargador rápido 25 W USB-C', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores' },
+  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección' },
+  { id: 104, name: 'Audífonos Bluetooth AirBeat', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio' },
+  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas' },
+  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores' },
+];
+const demoSales = [
+  { clientId: 'demo-sale-001', number: 'V-00001', createdAt: '2026-11-26T09:14:00.000Z', date: '2026-11-26', payment: 'Efectivo', paymentBreakdown: { Efectivo: 67000 }, total: 67000, items: [{ id: 101, name: 'Cable USB-C reforzado 1 m', qty: 1, price: 18000, originalPrice: 18000, cost: 8500 }, { id: 102, name: 'Cargador rápido 25 W USB-C', qty: 1, price: 49000, originalPrice: 49000, cost: 28000 }] },
+  { clientId: 'demo-sale-002', number: 'V-00002', createdAt: '2026-11-26T10:02:00.000Z', date: '2026-11-26', payment: 'Tarjeta', paymentBreakdown: { Tarjeta: 78000 }, total: 78000, items: [{ id: 104, name: 'Audífonos Bluetooth AirBeat', qty: 1, price: 78000, originalPrice: 78000, cost: 44000 }] },
+  { clientId: 'demo-sale-003', number: 'V-00003', createdAt: '2026-11-26T11:20:00.000Z', date: '2026-11-26', payment: 'Transferencia', paymentBreakdown: { Transferencia: 47000 }, total: 47000, items: [{ id: 103, name: 'Vidrio templado Samsung A54', qty: 1, price: 15000, originalPrice: 15000, cost: 4200 }, { id: 105, name: 'Funda antigolpes iPhone 13', qty: 1, price: 32000, originalPrice: 32000, cost: 14500 }] },
+  { clientId: 'demo-sale-004', number: 'V-00004', createdAt: '2026-11-26T12:05:00.000Z', date: '2026-11-26', payment: 'Pago dividido', paymentBreakdown: { Efectivo: 20000, Tarjeta: 19000 }, total: 39000, items: [{ id: 106, name: 'Mouse inalámbrico compacto', qty: 1, price: 39000, originalPrice: 39000, cost: 21000 }] },
+];
+async function seedDemoData() {
+  const businessId = 1;
+  await env.DB.transaction(async db => {
+    await db.prepare('INSERT INTO pos_business_state (id,business_id,products,sales,categories,receipt_settings,category_catalog_version,updated_at) VALUES (?,?,?,?,?,?,1,?) ON CONFLICT (id) DO NOTHING').bind(businessId,businessId,'[]','[]','[]',JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now()).run();
+    const state = await db.prepare('SELECT products,sales FROM pos_business_state WHERE business_id=? FOR UPDATE').bind(businessId).first<any>();
+    if (!JSON.parse(state?.products || '[]').length) await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Audio','Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
+    const shift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
+    if (!shift) await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',200000,87000,97000,47000,4,6,0,0,?)").bind(businessId,now()).run();
+    const orders = await db.prepare('SELECT COUNT(*) AS count FROM pos_service_orders WHERE business_id=?').bind(businessId).first<any>();
+    if (Number(orders?.count || 0) === 0) {
+      const examples = [
+        ['OS-001','Laura Gómez','300 555 0101','1020304050','Celular','Samsung','Galaxy A54','IMEI 351234567890123','Pantalla quebrada y marco con golpes','Cambio de módulo de pantalla','Reparado / listo para entregar',285000,85000,285000],
+        ['OS-002','Andrés Ruiz','300 555 0102','1010101010','Computador portátil','Lenovo','IdeaPad 3','Serial PF-4J22AB','No enciende, incluye cargador','Diagnóstico de encendido','Esperando respuesta del cliente',0,0,0],
+        ['OS-003','Camila Torres','300 555 0103','1030303030','Tablet','Apple','iPad 9ª generación','Serial F9G7X22PQL','Pantalla con líneas verticales','Revisión de display','Recibido',0,0,0],
+        ['OS-004','Miguel Díaz','300 555 0104','1040404040','Consola','Sony','PlayStation 5','Serial PS5-883920','No lee discos','Limpieza y ajuste de lector','Entregado',160000,35000,160000],
+      ];
+      for (const item of examples) {
+        const createdAt = now();
+        const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,...item,1,'Demostración',createdAt,createdAt).run();
+        await db.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,to_status,note,actor_name,created_at) VALUES (? ,?,'Creación',?,'Equipo recibido y orden creada para demostración.','Demostración',?)").bind(businessId,created.meta.last_row_id,item[11],createdAt).run();
+      }
+    }
+  });
+}
 async function initializeTables() {
   // La instalación comercial usa una sola aplicación, pero cada negocio tendrá
   // una identidad y datos propios. Por ahora todos los registros históricos se
@@ -345,6 +383,7 @@ export async function POST(request: Request) {
       const created = await env.DB.prepare('INSERT INTO pos_users (name, username, password_hash, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind('Demostración', 'demostracion', await hashPassword(token()), 'owner', '[]', now()).run();
       user = { id: created.meta.last_row_id, name: 'Demostración', username: 'demostracion', role: 'owner', permissions: '[]' };
     }
+    await seedDemoData();
     const safeUser = { id: user.id, name: user.name, username: user.username, role: user.role, permissions: JSON.parse(user.permissions || '[]') };
     return json({ user: safeUser, cashShift: await activeCashShift(safeUser) }, 200, { 'Set-Cookie': await session(Number(user.id)) });
   }
