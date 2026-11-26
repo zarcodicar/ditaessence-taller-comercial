@@ -25,9 +25,14 @@ const currency = new Intl.NumberFormat('es-CO', { style: 'currency', currency: '
 const localDateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const initialProducts: Product[] = [];
 const initialRepairs: Repair[] = [];
-const categoryNames = (_products: Product[], saved: string[] = []) => Array.from(new Set(saved.map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es'));
+const categoryNames = (_products: Product[], saved: string[] = []) => Array.from(new Set(saved.map(value => String(value || '').trim()).filter(value => value && value !== 'Sin categoría'))).sort((a, b) => a.localeCompare(b, 'es'));
 const OFFLINE_SNAPSHOT = 'cellhouse-offline-snapshot-v1';
 const OFFLINE_SALES = 'cellhouse-offline-sales-v1';
+const scopedStorageKey = (key: string) => {
+  if (typeof window === 'undefined') return `${key}:default`;
+  const code = new URLSearchParams(window.location.search).get('business')?.trim().toUpperCase() || 'default';
+  return `${key}:${code}`;
+};
 
 function localValue<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
@@ -64,6 +69,7 @@ export default function Home() {
   const [cartPrices, setCartPrices] = useState<Record<number, number>>({});
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('');
+  const [accessError, setAccessError] = useState('');
   const [cash, setCash] = useState(0);
   const [cashShift, setCashShift] = useState<any>(null);
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
@@ -74,7 +80,7 @@ export default function Home() {
   const [showRepair, setShowRepair] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
-  const [pendingSales, setPendingSales] = useState<OfflineSale[]>(() => localValue(OFFLINE_SALES, []));
+  const [pendingSales, setPendingSales] = useState<OfflineSale[]>(() => localValue(scopedStorageKey(OFFLINE_SALES), []));
   const syncingSales = useRef(false);
   const savingBusiness = useRef(false);
   const skipBusinessSave = useRef(true);
@@ -100,7 +106,7 @@ export default function Home() {
     return () => { window.removeEventListener('online', connected); window.removeEventListener('offline', disconnected); };
   }, []);
   useEffect(() => {
-    const cached = localValue<any>(OFFLINE_SNAPSHOT, null);
+    const cached = localValue<any>(scopedStorageKey(OFFLINE_SNAPSHOT), null);
     const requestedBusinessCode = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('business')?.trim() || '';
     const openSession = isDemo
       ? fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'demo-login' }) })
@@ -112,6 +118,8 @@ export default function Home() {
       if (!response.ok) throw new Error('Sin conexión');
       return response.json();
     }).then(data => {
+      if (!data.user && data.accessStatus === 'suspended') setAccessError('Tu acceso está suspendido. Actualiza tu método de pago o comunícate con DitaEssence para reactivarlo.');
+      else if (data.user) setAccessError('');
       setAccount(data.user);
       setWorkers(data.workers || []);
       setNotifications(data.notifications || []);
@@ -119,7 +127,7 @@ export default function Home() {
       if (data.businessState) {
         serverUpdatedAt.current = data.businessState.updatedAt || '';
         const loadedProducts = data.businessState.products || [];
-        const merged = mergePendingSales(loadedProducts, data.businessState.sales || [], localValue(OFFLINE_SALES, []));
+        const merged = mergePendingSales(loadedProducts, data.businessState.sales || [], localValue(scopedStorageKey(OFFLINE_SALES), []));
         setProducts(merged.products);
         setSalesHistory(merged.sales);
         setCategories(categoryNames(loadedProducts, data.businessState.categories || []));
@@ -130,7 +138,7 @@ export default function Home() {
       setAuthReady(true);
     }).catch(() => {
       if (cached?.account) {
-        const merged = mergePendingSales(cached.products || [], cached.sales || [], localValue(OFFLINE_SALES, []));
+        const merged = mergePendingSales(cached.products || [], cached.sales || [], localValue(scopedStorageKey(OFFLINE_SALES), []));
         setAccount(cached.account);
         setWorkers(cached.workers || []);
         setNotifications(cached.notifications || []);
@@ -150,7 +158,7 @@ export default function Home() {
   useEffect(() => {
     if (!businessReady || !account) return;
     const offlineProducts = products.map(product => ({ ...product, image: '' }));
-    saveLocal(OFFLINE_SNAPSHOT, { account, workers, notifications, cashShift, products: offlineProducts, sales: salesHistory, categories, receiptSettings });
+    saveLocal(scopedStorageKey(OFFLINE_SNAPSHOT), { account, workers, notifications, cashShift, products: offlineProducts, sales: salesHistory, categories, receiptSettings });
   }, [account, businessReady, cashShift, categories, notifications, products, receiptSettings, salesHistory, workers]);
   useEffect(() => {
     if (!businessReady || !account || !online || pendingSales.length || syncingSales.current) return;
@@ -170,7 +178,7 @@ export default function Home() {
       if (syncingSales.current) return;
       syncingSales.current = true;
       try {
-        const queued = localValue<OfflineSale[]>(OFFLINE_SALES, []);
+        const queued = localValue<OfflineSale[]>(scopedStorageKey(OFFLINE_SALES), []);
         if (!queued.length) { setPendingSales([]); return; }
         const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sync-sales', sales: queued }) });
         const data = await response.json();
@@ -178,9 +186,9 @@ export default function Home() {
         const completed = new Set((data.businessState?.synced || []).map((item: any) => item.clientId));
         // A sale may have been queued while this request was in flight. Always
         // remove completed entries from the latest local queue so it cannot be lost.
-        const latestQueue = localValue<OfflineSale[]>(OFFLINE_SALES, []);
+        const latestQueue = localValue<OfflineSale[]>(scopedStorageKey(OFFLINE_SALES), []);
         const remaining = latestQueue.filter(entry => !completed.has(entry.clientId));
-        saveLocal(OFFLINE_SALES, remaining);
+        saveLocal(scopedStorageKey(OFFLINE_SALES), remaining);
         setPendingSales(remaining);
         skipBusinessSave.current = true;
         serverUpdatedAt.current = data.businessState?.updatedAt || serverUpdatedAt.current;
@@ -199,13 +207,30 @@ export default function Home() {
     return () => window.clearInterval(retry);
   }, [account, businessReady, online, pendingSales.length]);
   useEffect(() => {
-    if (!businessReady || !account || !online || pendingSales.length) return;
+    if (!businessReady || !account || !online) return;
     const refresh = async () => {
       if (document.visibilityState !== 'visible' || syncingSales.current || savingBusiness.current) return;
       try {
-        const response = await fetch('/api/auth', { cache: 'no-store' });
+        const requestedBusinessCode = new URLSearchParams(window.location.search).get('business')?.trim() || '';
+        const response = await fetch(`/api/auth${requestedBusinessCode ? `?business=${encodeURIComponent(requestedBusinessCode)}` : ''}`, { cache: 'no-store' });
         if (!response.ok) return;
         const data = await response.json();
+        if (!data.user) {
+          setAccessError(data.accessStatus === 'suspended'
+            ? 'Tu acceso está suspendido. Actualiza tu método de pago o comunícate con DitaEssence para reactivarlo.'
+            : 'Tu sesión finalizó. Inicia sesión nuevamente para continuar.');
+          setBusinessReady(false);
+          setAccount(null);
+          setProducts([]);
+          setCategories([]);
+          setSalesHistory([]);
+          setNotifications([]);
+          setWorkers([]);
+          setCashShift(null);
+          setCart({});
+          setCartPrices({});
+          return;
+        }
         const remoteUpdate = data.businessState?.updatedAt || '';
         if (!remoteUpdate || remoteUpdate === serverUpdatedAt.current) return;
         skipBusinessSave.current = true;
@@ -224,7 +249,7 @@ export default function Home() {
     const interval = window.setInterval(() => void refresh(), 10000);
     document.addEventListener('visibilitychange', onVisible);
     return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible); };
-  }, [account, businessReady, online, pendingSales.length]);
+  }, [account, businessReady, online]);
   const cashOpen = Boolean(cashShift);
   const todayLabel = new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   const lines = products.filter((p) => cart[p.id]);
@@ -272,8 +297,8 @@ export default function Home() {
       } catch { /* Se conserva localmente justo debajo. */ }
     }
     const pendingEntry = { ...entry, offline: true };
-    const nextPending = [...localValue<OfflineSale[]>(OFFLINE_SALES, []), pendingEntry];
-    saveLocal(OFFLINE_SALES, nextPending);
+    const nextPending = [...localValue<OfflineSale[]>(scopedStorageKey(OFFLINE_SALES), []), pendingEntry];
+    saveLocal(scopedStorageKey(OFFLINE_SALES), nextPending);
     setPendingSales(nextPending);
     setProducts((old) => old.map((product) => {
       const item = soldItems.find((line: any) => String(line.id) === String(product.id));
@@ -293,8 +318,8 @@ export default function Home() {
   const changeRepair = (id: string) => setRepairs((old) => old.map((r) => r.id === id ? { ...r, status: r.status === 'Recibido' ? 'Diagnóstico' : r.status === 'Diagnóstico' ? 'En reparación' : r.status === 'En reparación' ? 'Listo' : 'Listo' } : r));
 
   if (!authReady) return isDemo ? <main className="auth-shell demo-boot" aria-label="Abriendo demostración" /> : <main className="auth-shell"><div className="auth-card"><img className="auth-brand" src="/dtc-stage.svg" alt="DTC Stage" /><b>DTC Stage</b><p>Preparando acceso seguro…</p></div></main>;
-  if (!account) return <Login onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; skipBusinessSave.current = true; serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(sessionData?.businessState?.sales || []); setCategories(categoryNames(loadedProducts, sessionData?.businessState?.categories || [])); setReceiptSettings(normalizeReceiptSettings(sessionData?.businessState?.receiptSettings)); setBusinessReady(true); }} />;
-  const logout = async () => { try { await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }); } catch { /* También permite salir sin conexión. */ } window.localStorage.removeItem(OFFLINE_SNAPSHOT); setBusinessReady(false); setAccount(null); setProducts([]); setCategories([]); setReceiptSettings(DEFAULT_RECEIPT_SETTINGS); setSalesHistory([]); setCart({}); setCartPrices({}); };
+  if (!account) return <Login initialError={accessError} onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; skipBusinessSave.current = true; serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; setAccessError(''); setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(sessionData?.businessState?.sales || []); setCategories(categoryNames(loadedProducts, sessionData?.businessState?.categories || [])); setReceiptSettings(normalizeReceiptSettings(sessionData?.businessState?.receiptSettings)); setBusinessReady(true); }} />;
+  const logout = async () => { try { await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }); } catch { /* También permite salir sin conexión. */ } window.localStorage.removeItem(scopedStorageKey(OFFLINE_SNAPSHOT)); window.localStorage.removeItem(scopedStorageKey(OFFLINE_SALES)); setBusinessReady(false); setAccount(null); setProducts([]); setCategories([]); setReceiptSettings(DEFAULT_RECEIPT_SETTINGS); setSalesHistory([]); setCart({}); setCartPrices({}); };
   return <main className="app-shell min-h-screen bg-[#f5f7fa] text-slate-950">
     <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-800 bg-[#101827] p-5 text-slate-300 lg:flex lg:flex-col">
       <div className="mb-10 flex items-center gap-3 px-2"><img className="system-logo size-10" src="/dtc-stage.svg" alt="" /><div><p className="font-bold text-white">{receiptSettings.businessName || 'DTC Stage'}</p><p className="text-xs text-slate-400">Servicio técnico y dispositivos</p></div></div>
@@ -312,7 +337,7 @@ export default function Home() {
       <div className="app-content mx-auto max-w-[1600px] p-4 sm:p-6 xl:p-8">{notice && <div className="app-notice mb-5 flex items-center justify-between rounded-xl border border-lime-200 bg-lime-50 p-3 text-sm text-lime-800"><span><CheckCircle2 className="mr-2 inline size-4" />{notice}</span><button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X className="size-4" /></button></div>}
         {section === 'Punto de venta' && <PointOfSale receiptSettings={receiptSettings} cashOpen={cashOpen} products={products} cart={cart} cartPrices={cartPrices} setCartPrice={(id: number, price: number) => setCartPrices(old => ({ ...old, [id]: Math.max(0, Math.round(price) || 0) }))} total={total} search={search} setSearch={setSearch} add={(id: number) => setQty(id, (cart[id] || 0) + 1)} setQty={setQty} checkout={addSale} onNotice={setNotice} onCashShift={setCashShift} />}
         {section === 'Ventas' && <SalesHistory receiptSettings={receiptSettings} canDelete={online} isWorker={activeRole === 'worker'} onNotify={async (alert: any) => { const created = { id: Date.now(), type: alert.type, severity: alert.severity || 'info', message: alert.text, actor_name: account.name, entity_type: alert.entityType, entity_id: alert.entityId, details: alert.details || {}, createdAt: new Date().toISOString() }; const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'notify-owner', ...alert }) }); if (response.ok) setNotifications((old) => [created, ...old]); }} sales={salesHistory} onDelete={async (sale: any) => { if (sale.payment === 'Efectivo' && Number(sale.total) > 0) { const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'void-cash-sale', amount: sale.total }) }); const result = await response.json(); if (!response.ok) return setNotice(result.error || 'No fue posible ajustar la caja.'); setCashShift(result.shift); } setProducts((old) => old.map((product) => { const item = sale.items.find((line: any) => line.id === product.id); return item ? { ...product, stock: product.stock + item.qty } : product; })); if (sale.payment === 'Efectivo' && Number(sale.total) > 0) setCash((old) => Math.max(0, old - sale.total)); setSalesHistory((old) => old.filter((item) => item.number !== sale.number)); setNotice(`Venta ${sale.number} eliminada y existencias restauradas.`); }} />}
-        {section === 'Inventario' && <Inventory products={products} categories={categories} onNotice={setNotice} canManage={online && (activeRole === 'owner' || currentWorkerPermissions.includes('Inventario'))} canDelete={online && activeRole === 'owner'} canEditCategories={online && activeRole === 'owner'} canDeleteCategories={online && activeRole === 'owner'} canSeeCosts={activeRole === 'owner' || currentWorkerPermissions.includes('Inventario') || currentWorkerPermissions.includes('Ver costos y márgenes')} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} addCategory={(name: string) => setCategories(old => categoryNames([], [...old, name]))} renameCategory={(oldName: string, newName: string) => { setCategories(old => categoryNames([], old.map(category => category === oldName ? newName : category))); setProducts(old => old.map(product => product.category === oldName ? { ...product, category: newName } : product)); }} removeCategory={(name: string) => { setCategories(old => old.filter(category => category !== name)); setProducts(old => old.map(product => product.category === name ? { ...product, category: '' } : product)); }} add={(product) => setProducts((old) => [...old, product])} update={(product) => setProducts((old) => old.map((p) => p.id === product.id ? product : p))} remove={(id) => setProducts((old) => old.filter((p) => p.id !== id))} />}
+        {section === 'Inventario' && <Inventory products={products} categories={categories} onNotice={setNotice} canManage={online && (activeRole === 'owner' || currentWorkerPermissions.includes('Inventario'))} canDelete={online && activeRole === 'owner'} canEditCategories={online && activeRole === 'owner'} canDeleteCategories={online && activeRole === 'owner'} canSeeCosts={activeRole === 'owner' || currentWorkerPermissions.includes('Inventario') || currentWorkerPermissions.includes('Ver costos y márgenes')} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} addCategory={(name: string) => setCategories(old => categoryNames([], [...old, name]))} renameCategory={(oldName: string, newName: string) => { setCategories(old => categoryNames([], old.map(category => category === oldName ? newName : category))); setProducts(old => old.map(product => product.category === oldName ? { ...product, category: newName } : product)); }} removeCategory={(name: string) => { setCategories(old => old.filter(category => category !== name)); setProducts(old => old.map(product => product.category === name ? { ...product, category: 'Sin categoría' } : product)); }} add={(product) => setProducts((old) => [...old, product])} update={(product) => setProducts((old) => old.map((p) => p.id === product.id ? product : p))} remove={(id) => setProducts((old) => old.filter((p) => p.id !== id))} />}
         {section === 'Órdenes de servicio' && <ServiceOrders receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} isOwner={activeRole === 'owner'} />}
         {section === 'Devoluciones y ajustes' && <ReturnsAdjustments receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} onBusinessState={(state: any) => { if (!state) return; skipBusinessSave.current = true; serverUpdatedAt.current = state.updatedAt || serverUpdatedAt.current; setProducts(state.products || []); setSalesHistory(state.sales || []); setCategories(categoryNames(state.products || [], state.categories || [])); setReceiptSettings(normalizeReceiptSettings(state.receiptSettings)); }} />}
         <div className={section === 'Caja y movimientos' ? '' : 'hidden'}><CashManagement shift={cashShift} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} canManageCash={activeRole === 'owner'} canRecordMovements={activeRole === 'owner' || currentWorkerPermissions.includes('Caja y movimientos')} onShiftChange={setCashShift} onNotice={setNotice} /></div>
@@ -340,10 +365,11 @@ function Inventory(props: any) {
 function Cash({ cash, move }: any) { const [amount, setAmount] = useState(''); return <div className="grid gap-6 lg:grid-cols-[1.1fr_.9fr]"><Panel title="Caja principal · turno abierto"><p className="text-sm text-slate-500">Efectivo esperado actualmente</p><p className="mt-2 text-4xl font-black">{currency.format(cash)}</p><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Ventas efectivo</p><b>{currency.format(684000)}</b></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Transferencias</p><b>{currency.format(240000)}</b></div></div></Panel><Panel title="Registrar movimiento"><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Monto en COP" className="mb-3 h-11 w-full rounded-xl border px-3" /><div className="flex gap-3"><Button className="flex-1 bg-lime-400 text-slate-950 hover:bg-lime-300" onClick={() => { move(Number(amount)); setAmount(''); }}>Ingreso</Button><Button className="flex-1" variant="outline" onClick={() => { move(-Number(amount)); setAmount(''); }}>Egreso</Button></div><p className="mt-5 border-t pt-4 text-sm text-slate-500">Movimientos recientes: compra de empaques −$18.000 · fondo de caja +$50.000</p></Panel></div> }
 function Reports({ products, repairs }: any) { return <><div className="mb-6"><h2 className="text-xl font-bold">Reportes</h2><p className="text-sm text-slate-500">Resumen operativo de la sucursal para este mes.</p></div><div className="grid gap-4 md:grid-cols-4"><Metric label="Ventas del mes" value="$ 18.640.000" note="+12,4% vs. mes anterior" icon={<TrendingUp />} /><Metric label="Ticket promedio" value="$ 69.800" note="267 ventas" icon={<ReceiptText />} /><Metric label="Utilidad estimada" value="$ 6.770.000" note="36,3% margen" icon={<CircleDollarSign />} /><Metric label="Reparaciones" value={String(repairs.length)} note="83% entregadas a tiempo" icon={<Wrench />} /></div><div className="mt-6 grid gap-6 lg:grid-cols-2"><Panel title="Productos con mayor rotación"><ol className="space-y-3">{products.slice(0, 5).map((p: Product, i: number) => <li key={p.id} className="flex justify-between border-b pb-2"><span>{i + 1}. {p.name}</span><b>{32 - i * 4} unidades</b></li>)}</ol></Panel><Panel title="Rendimiento de reparaciones"><div className="space-y-4"><Progress label="Entregadas a tiempo" value="83%" /><Progress label="Diagnóstico en menos de 24 h" value="76%" /><Progress label="Reparaciones con garantía" value="100%" /></div></Panel></div></> }
 function Config({ notice, workers, setWorkers }: any) { const [form, setForm] = useState({ name: '', username: '', password: '', permissions: ['Punto de venta', 'Inventario', 'Caja y movimientos'] as Permission[] }); const sectionPermissions: { value: Permission; label: string; text: string }[] = [{ value: 'Punto de venta', label: 'Punto de venta', text: 'Escanear y cobrar' }, { value: 'Inventario', label: 'Inventario', text: 'Agregar productos' }, { value: 'Caja y movimientos', label: 'Caja y movimientos', text: 'Abrir caja y registrar movimientos' }, { value: 'Ventas', label: 'Ventas', text: 'Consultar comprobantes' }, { value: 'Reportes', label: 'Reportes', text: 'Ver resultados y ganancias' }]; const privatePermissions: { value: Permission; label: string; text: string }[] = [{ value: 'Ver costos y márgenes', label: 'Ver costos y márgenes', text: 'Costo, margen y rentabilidad por producto' }, { value: 'Ver indicadores financieros', label: 'Ver indicadores financieros', text: 'Capital del inventario, efectivo esperado y balances' }]; const toggle = (value: Permission) => setForm((old) => ({ ...old, permissions: old.permissions.includes(value) ? old.permissions.filter((item) => item !== value) : [...old.permissions, value] })); const saveWorker = () => { if (!form.name.trim() || !form.username.trim() || !form.password) { notice('Completa nombre, usuario y contraseña para crear el trabajador.'); return; } if (workers.some((worker: any) => worker.username.toLowerCase() === form.username.trim().toLowerCase())) { notice('Ese usuario ya existe. Elige otro nombre de usuario.'); return; } setWorkers((old: any[]) => [...old, { id: Date.now(), name: form.name.trim(), username: form.username.trim(), permissions: form.permissions }]); setForm({ name: '', username: '', password: '', permissions: ['Punto de venta', 'Inventario', 'Caja y movimientos'] }); notice('Trabajador creado con los permisos seleccionados.'); }; const permissionList = (items: any[]) => <div className="permissions-list">{items.map((permission) => <label key={permission.value}><input type="checkbox" checked={form.permissions.includes(permission.value)} onChange={() => toggle(permission.value)} /><span><b>{permission.label}</b><small>{permission.text}</small></span></label>)}</div>; return <section className="settings-view"><div className="settings-heading"><div><h2>Configuración del propietario</h2><p>Crea cuentas de trabajadores y decide tanto las secciones como la información sensible que puede ver cada una.</p></div><span><ShieldCheck /> Propietario</span></div><div className="settings-grid"><Panel title="Crear trabajador"><div className="settings-form"><Field label="Nombre del trabajador" value={form.name} onChange={(value: string) => setForm({ ...form, name: value })} placeholder="Ej. Valentina Pérez" /><Field label="Usuario" value={form.username} onChange={(value: string) => setForm({ ...form, username: value })} placeholder="Ej. valentina" /><Field label="Contraseña" value={form.password} onChange={(value: string) => setForm({ ...form, password: value })} placeholder="Crea una contraseña" type="password" /><div><b className="settings-label">Secciones permitidas</b><p className="settings-help">Define en qué módulos podrá trabajar.</p>{permissionList(sectionPermissions)}</div><div><b className="settings-label">Información confidencial</b><p className="settings-help">Por seguridad, estas opciones empiezan desactivadas.</p>{permissionList(privatePermissions)}</div><Button onClick={saveWorker} className="settings-save"><UsersRound />Crear trabajador</Button></div></Panel><Panel title="Protección del trabajador"><div className="privacy-card"><LockKeyhole /><div><b>Acceso limitado por defecto</b><p>Puede vender, agregar productos y abrir caja, pero no verá costos, márgenes, capital en inventario ni balances del negocio.</p></div></div><p className="settings-help">El propietario puede habilitar cada dato sensible mediante las casillas de la izquierda cuando realmente lo necesite.</p></Panel></div><Panel title="Usuarios creados"><div className="settings-users"><div className="settings-user owner"><div><b>Propietario</b><small>Cuenta administradora · acceso total</small></div><span>Propietario</span></div>{workers.length ? workers.map((worker: any) => <div className="settings-user" key={worker.id}><div><b>{worker.name}</b><small>@{worker.username} · {worker.permissions.length} permisos asignados</small></div><span>Trabajador</span></div>) : <p className="settings-empty"><LockKeyhole />Aún no hay trabajadores creados. Usa el formulario para agregar el primero.</p>}</div></Panel></section> }
-function Login({ onLogin }: { onLogin: (user: any, cashShift?: any, sessionData?: any) => void }) {
-  const [mode, setMode] = useState<'loading' | 'login' | 'setup'>('loading'); const [setupProtected, setSetupProtected] = useState(false); const [setupToken, setSetupToken] = useState(''); const [name, setName] = useState(''); const [username, setUsername] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  useEffect(() => { fetch('/api/auth').then(r => r.json()).then(data => { setSetupProtected(Boolean(data.setupProtected)); setMode(data.initialized ? 'login' : 'setup'); }).catch(() => setError('No fue posible conectar con el acceso seguro.')); }, []);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { const businessCode = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('business')?.trim() || ''; const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mode === 'setup' ? { action: 'setup', setupToken, name, username, password } : { action: 'login', username, password, businessCode }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); const sessionResponse = await fetch('/api/auth'); const sessionData = sessionResponse.ok ? await sessionResponse.json() : data; onLogin(sessionData.user || data.user, sessionData.cashShift || data.cashShift, sessionData); } catch (reason: any) { setError(reason.message || 'No se pudo iniciar sesión.'); } finally { setBusy(false); } };
+function Login({ onLogin, initialError = '' }: { onLogin: (user: any, cashShift?: any, sessionData?: any) => void; initialError?: string }) {
+  const [mode, setMode] = useState<'loading' | 'login' | 'setup'>('loading'); const [setupProtected, setSetupProtected] = useState(false); const [setupToken, setSetupToken] = useState(''); const [name, setName] = useState(''); const [username, setUsername] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(initialError); const [busy, setBusy] = useState(false);
+  useEffect(() => { setError(initialError); }, [initialError]);
+  useEffect(() => { const businessCode = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('business')?.trim() || ''; fetch(`/api/auth${businessCode ? `?business=${encodeURIComponent(businessCode)}` : ''}`).then(r => r.json()).then(data => { setSetupProtected(Boolean(data.setupProtected)); setMode(data.initialized ? 'login' : 'setup'); if (data.accessStatus === 'suspended') setError('Tu acceso está suspendido. Actualiza tu método de pago o comunícate con DitaEssence para reactivarlo.'); }).catch(() => setError('No fue posible conectar con el acceso seguro.')); }, []);
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { const businessCode = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('business')?.trim() || ''; const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mode === 'setup' ? { action: 'setup', setupToken, name, username, password } : { action: 'login', username, password, businessCode }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); const sessionResponse = await fetch(`/api/auth${businessCode ? `?business=${encodeURIComponent(businessCode)}` : ''}`); const sessionData = sessionResponse.ok ? await sessionResponse.json() : data; onLogin(sessionData.user || data.user, sessionData.cashShift || data.cashShift, sessionData); } catch (reason: any) { setError(reason.message || 'No se pudo iniciar sesión.'); } finally { setBusy(false); } };
   return <main className="auth-shell"><form className="auth-card" onSubmit={submit} autoComplete="off"><img className="auth-brand" src="/dtc-stage.svg" alt="DTC Stage" /><h1>DTC Stage</h1><p>{mode === 'setup' ? 'Activa el negocio y crea la cuenta del propietario. Esta cuenta tendrá acceso total.' : 'Ingresa con tu usuario y contraseña para continuar.'}</p>{mode === 'setup' && <><Field label="Nombre del propietario" value={name} onChange={setName} placeholder="Ej. Diego González" autoComplete="off" />{setupProtected && <NoAutofillField purpose="setup-token" label="Código de activación" value={setupToken} onChange={setSetupToken} placeholder="Código entregado con el sistema" />}</>}{mode === 'loading' ? <p className="auth-loading">Preparando acceso…</p> : <><NoAutofillField purpose="login-user" label="Usuario" value={username} onChange={setUsername} placeholder="Escribe tu usuario" /><NoAutofillField purpose="login-password" label="Contraseña" value={password} onChange={setPassword} placeholder="Escribe tu contraseña" type="password" />{error && <p className="auth-error">{error}</p>}<Button disabled={busy} type="submit" className="auth-submit">{busy ? 'Validando…' : mode === 'setup' ? 'Activar y crear propietario' : 'Iniciar sesión'}</Button><PwaInstallButton full /></>}</form></main>;
 }
 function Config2({ notice, workers, setWorkers }: any) {

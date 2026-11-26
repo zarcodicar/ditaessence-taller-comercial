@@ -23,7 +23,8 @@ const money = new Intl.NumberFormat('es-CO', {
   currency: 'COP',
   maximumFractionDigits: 0,
 });
-const blank = (category = '') => ({
+const UNCATEGORIZED = 'Sin categoría';
+const blank = (category = UNCATEGORIZED) => ({
   name: '',
   barcode: '',
   cost: '',
@@ -127,7 +128,7 @@ export function InventoryControl({
       price: String(product.price),
       stock: String(product.stock),
       min: String(product.min),
-      category: categories.includes(product.category) ? product.category : '',
+      category: categories.includes(product.category) ? product.category : UNCATEGORIZED,
       image: product.image || '',
     });
   };
@@ -138,13 +139,12 @@ export function InventoryControl({
         (item: string) =>
           item.toLocaleLowerCase('es') ===
           requestedCategory.toLocaleLowerCase('es'),
-      ) || '';
+      ) || (requestedCategory || UNCATEGORIZED);
     if (
       !canManage ||
       !form.name.trim() ||
       !form.price ||
-      form.stock === '' ||
-      !category
+      form.stock === ''
     )
       return;
     const barcode = form.barcode.trim();
@@ -621,7 +621,7 @@ export function InventoryControl({
                 </h3>
                 <p>
                   {editing === 'new'
-                    ? 'Registra costos, precio, categoría y existencias del producto.'
+                    ? 'Registra costos, precio, categoría opcional y existencias del producto.'
                     : 'Actualiza la información, existencias o imagen.'}
                 </p>
               </div>
@@ -632,18 +632,14 @@ export function InventoryControl({
             {formError && <div className="inventory-form-error" role="alert"><TriangleAlert /><span>{formError}</span></div>}
             <div className="inventory-form">
               <label>
-                Categoría *
+                Categoría <small>(opcional)</small>
                 <select
                   value={form.category}
                   onChange={(event) =>
                     setForm({ ...form, category: event.target.value })
                   }
                 >
-                  <option value="" disabled>
-                    {categories.length
-                      ? 'Selecciona una categoría'
-                      : 'Primero crea una categoría'}
-                  </option>
+                  <option value={UNCATEGORIZED}>Sin categoría</option>
                   {categories.map((category: string) => (
                     <option key={category} value={category}>
                       {category}
@@ -717,7 +713,6 @@ export function InventoryControl({
               <Button
                 disabled={
                   !form.name.trim() ||
-                  !categories.includes(form.category) ||
                   !form.price ||
                   form.stock === ''
                 }

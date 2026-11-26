@@ -319,14 +319,18 @@ export async function GET(request: Request) {
   const requestedBusinessCode = String(url.searchParams.get('business') || '').trim().toUpperCase();
   let user = await current(request);
   let clearMismatchedSession = false;
+  let accessStatus = '';
   // Una sesión de demostración o de otro negocio nunca puede reutilizarse al
   // abrir la URL de un cliente. El enlace determina el negocio y obliga a
   // iniciar sesión allí cuando la cookie actual pertenece a otro espacio.
-  if (requestedBusinessCode && user) {
-    const requestedBusiness = await env.DB.prepare("SELECT id FROM pos_businesses WHERE code=? AND status='active'").bind(requestedBusinessCode).first<any>();
-    if (requestedBusiness && Number(requestedBusiness.id) !== Number(user.businessId)) {
-      user = null;
-      clearMismatchedSession = true;
+  if (requestedBusinessCode) {
+    const requestedBusiness = await env.DB.prepare("SELECT id,status FROM pos_businesses WHERE code=?").bind(requestedBusinessCode).first<any>();
+    if (requestedBusiness) {
+      accessStatus = String(requestedBusiness.status || '');
+      if (accessStatus !== 'active' || (user && Number(requestedBusiness.id) !== Number(user.businessId))) {
+        user = null;
+        clearMismatchedSession = true;
+      }
     }
   }
   if(url.searchParams.get('resource')==='service-photos'){
@@ -480,7 +484,7 @@ export async function GET(request: Request) {
   const workers = user?.role === 'owner' ? await env.DB.prepare("SELECT id, name, username, role, permissions FROM pos_users WHERE business_id=? AND role='worker' ORDER BY name").bind(user.businessId).all<any>() : null;
   const notifications = user?.role === 'owner' ? await env.DB.prepare('SELECT * FROM pos_notifications WHERE business_id=? ORDER BY id DESC LIMIT 200').bind(user.businessId).all<any>() : null;
   const state = user ? await env.DB.prepare('SELECT products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>() : null;
-  return json({ initialized: Number(count?.count || 0) > 0, setupProtected: Boolean(SETUP_TOKEN), user, workers: workers?.results.map(worker => ({ ...worker, permissions: JSON.parse(worker.permissions || '[]') })) || [], notifications: notifications?.results || [], cashShift: await activeCashShift(user), businessState: state ? { products: JSON.parse(state.products || '[]'), sales: JSON.parse(state.sales || '[]'), categories: Number(state.category_catalog_version || 0) >= 1 ? JSON.parse(state.categories || '[]') : [], receiptSettings: receiptSettings(JSON.parse(state.receipt_settings || '{}')), updatedAt: state.updated_at } : null }, 200, clearMismatchedSession ? { 'Set-Cookie': `${SESSION}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0` } : {});
+  return json({ initialized: Number(count?.count || 0) > 0, setupProtected: Boolean(SETUP_TOKEN), accessStatus, user, workers: workers?.results.map(worker => ({ ...worker, permissions: JSON.parse(worker.permissions || '[]') })) || [], notifications: notifications?.results || [], cashShift: await activeCashShift(user), businessState: state ? { products: JSON.parse(state.products || '[]'), sales: JSON.parse(state.sales || '[]'), categories: Number(state.category_catalog_version || 0) >= 1 ? JSON.parse(state.categories || '[]') : [], receiptSettings: receiptSettings(JSON.parse(state.receipt_settings || '{}')), updatedAt: state.updated_at } : null }, 200, clearMismatchedSession ? { 'Set-Cookie': `${SESSION}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0` } : {});
 }
 export async function POST(request: Request) {
   try {
@@ -544,8 +548,9 @@ export async function POST(request: Request) {
   }
   if (data.action === 'login') {
     const businessCode = String(data.businessCode || '').trim().toUpperCase();
-    const user = await env.DB.prepare("SELECT u.* FROM pos_users u JOIN pos_businesses b ON b.id=u.business_id AND b.status='active' WHERE u.username=? AND (?='' OR b.code=?)").bind(String(data.username || '').trim().toLowerCase(),businessCode,businessCode).first<any>();
+    const user = await env.DB.prepare("SELECT u.*,b.status AS business_status FROM pos_users u JOIN pos_businesses b ON b.id=u.business_id WHERE u.username=? AND (?='' OR b.code=?)").bind(String(data.username || '').trim().toLowerCase(),businessCode,businessCode).first<any>();
     if (!user || !(await validPassword(String(data.password || ''), user.password_hash))) return json({ error: 'Usuario o contraseña incorrectos.' }, 401);
+    if (user.business_status !== 'active') return json({ error: 'Tu acceso está suspendido. Actualiza tu método de pago o comunícate con DitaEssence para reactivarlo.' }, 403);
     const safeUser = { id: user.id, name: user.name, username: user.username, role: user.role, permissions: JSON.parse(user.permissions || '[]'), businessId: Number(user.business_id || 1) };
     return json({ user: safeUser, cashShift: await activeCashShift(safeUser) }, 200, { 'Set-Cookie': await session(user.id, safeUser.businessId) });
   }
