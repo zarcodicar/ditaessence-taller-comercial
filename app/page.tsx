@@ -33,6 +33,7 @@ const scopedStorageKey = (key: string) => {
   const code = new URLSearchParams(window.location.search).get('business')?.trim().toUpperCase() || 'default';
   return `${key}:${code}`;
 };
+const businessStateSignature = (products: Product[], sales: any[], categories: string[], receiptSettings: ReceiptSettings) => JSON.stringify({ products, sales, categories, receiptSettings });
 
 function localValue<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
@@ -84,6 +85,7 @@ export default function Home() {
   const syncingSales = useRef(false);
   const savingBusiness = useRef(false);
   const saveQueued = useRef(false);
+  const lastSavedState = useRef('');
   const [saveCycle, setSaveCycle] = useState(0);
   const serverUpdatedAt = useRef('');
   const [repairForm, setRepairForm] = useState({ customer: '', phone: '', device: '', problem: '', deposit: '' });
@@ -133,6 +135,7 @@ export default function Home() {
         setSalesHistory(merged.sales);
         setCategories(categoryNames(loadedProducts, data.businessState.categories || []));
         setReceiptSettings(normalizeReceiptSettings(data.businessState.receiptSettings));
+        lastSavedState.current = businessStateSignature(loadedProducts, data.businessState.sales || [], categoryNames(loadedProducts, data.businessState.categories || []), normalizeReceiptSettings(data.businessState.receiptSettings));
       } else { setProducts([]); setSalesHistory([]); setCategories([]); setReceiptSettings(DEFAULT_RECEIPT_SETTINGS); }
       if (data.user?.role === 'worker') setActiveRole('worker');
       setBusinessReady(Boolean(data.user));
@@ -148,6 +151,7 @@ export default function Home() {
         setSalesHistory(merged.sales);
         setCategories(cached.categories || []);
         setReceiptSettings(normalizeReceiptSettings(cached.receiptSettings));
+        lastSavedState.current = businessStateSignature(cached.products || [], cached.sales || [], cached.categories || [], normalizeReceiptSettings(cached.receiptSettings));
         setActiveRole(cached.account.role === 'worker' ? 'worker' : 'owner');
         setBusinessReady(true);
         setNotice('Modo sin conexión activo. Las ventas quedarán pendientes hasta recuperar internet.');
@@ -163,13 +167,15 @@ export default function Home() {
   }, [account, businessReady, cashShift, categories, notifications, products, receiptSettings, salesHistory, workers]);
   useEffect(() => {
     if (!businessReady || !account || !online || pendingSales.length || syncingSales.current) return;
+    const snapshot = businessStateSignature(products, salesHistory, categories, receiptSettings);
+    if (snapshot === lastSavedState.current) return;
     if (savingBusiness.current) { saveQueued.current = true; return; }
     const timer = window.setTimeout(() => {
       savingBusiness.current = true;
       fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save-business-state', products, sales: salesHistory, categories, receiptSettings, baseUpdatedAt: serverUpdatedAt.current }) }).then(response => {
         if (!response.ok) throw new Error('No fue posible guardar los cambios del negocio.');
         return response.json();
-      }).then(data => { serverUpdatedAt.current = data.updatedAt || serverUpdatedAt.current; }).catch(() => setNotice('No se guardó este cambio porque el negocio fue actualizado desde otra sesión. Recarga antes de continuar para proteger la información.')).finally(() => { savingBusiness.current = false; if (saveQueued.current) { saveQueued.current = false; setSaveCycle(value => value + 1); } });
+      }).then(data => { serverUpdatedAt.current = data.updatedAt || serverUpdatedAt.current; lastSavedState.current = snapshot; }).catch(() => setNotice('No se guardó este cambio porque el negocio fue actualizado desde otra sesión. Recarga antes de continuar para proteger la información.')).finally(() => { savingBusiness.current = false; if (saveQueued.current) { saveQueued.current = false; setSaveCycle(value => value + 1); } });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [products, salesHistory, categories, receiptSettings, businessReady, account, online, pendingSales.length, saveCycle]);
@@ -196,6 +202,7 @@ export default function Home() {
         setSalesHistory(data.businessState?.sales || []);
         setCategories(categoryNames(data.businessState?.products || [], data.businessState?.categories || []));
         setReceiptSettings(normalizeReceiptSettings(data.businessState?.receiptSettings));
+        lastSavedState.current = businessStateSignature(data.businessState?.products || [], data.businessState?.sales || [], categoryNames(data.businessState?.products || [], data.businessState?.categories || []), normalizeReceiptSettings(data.businessState?.receiptSettings));
         setCashShift(data.cashShift || null);
         setNotice(`${completed.size} venta${completed.size === 1 ? '' : 's'} pendiente${completed.size === 1 ? '' : 's'} sincronizada${completed.size === 1 ? '' : 's'} correctamente.`);
       } catch (error: any) {
@@ -239,6 +246,7 @@ export default function Home() {
         setSalesHistory(data.businessState.sales || []);
         setCategories(categoryNames(loadedProducts, data.businessState.categories || []));
         setReceiptSettings(normalizeReceiptSettings(data.businessState.receiptSettings));
+        lastSavedState.current = businessStateSignature(loadedProducts, data.businessState.sales || [], categoryNames(loadedProducts, data.businessState.categories || []), normalizeReceiptSettings(data.businessState.receiptSettings));
         setCashShift(data.cashShift || null);
         setWorkers(data.workers || []);
         setNotifications(data.notifications || []);
@@ -286,6 +294,7 @@ export default function Home() {
         setSalesHistory(data.businessState?.sales || []);
         setCategories(categoryNames(data.businessState?.products || [], data.businessState?.categories || []));
         setReceiptSettings(normalizeReceiptSettings(data.businessState?.receiptSettings));
+        lastSavedState.current = businessStateSignature(data.businessState?.products || [], data.businessState?.sales || [], categoryNames(data.businessState?.products || [], data.businessState?.categories || []), normalizeReceiptSettings(data.businessState?.receiptSettings));
         setCashShift(data.cashShift ?? null);
         if (cashReceived > 0) setCash((value) => value + cashReceived);
         setCart({});
@@ -316,7 +325,7 @@ export default function Home() {
   const changeRepair = (id: string) => setRepairs((old) => old.map((r) => r.id === id ? { ...r, status: r.status === 'Recibido' ? 'Diagnóstico' : r.status === 'Diagnóstico' ? 'En reparación' : r.status === 'En reparación' ? 'Listo' : 'Listo' } : r));
 
   if (!authReady) return isDemo ? <main className="auth-shell demo-boot" aria-label="Abriendo demostración" /> : <main className="auth-shell"><div className="auth-card"><img className="auth-brand" src="/dtc-stage.svg" alt="DTC Stage" /><b>DTC Stage</b><p>Preparando acceso seguro…</p></div></main>;
-  if (!account) return <Login initialError={accessError} onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; setAccessError(''); setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(sessionData?.businessState?.sales || []); setCategories(categoryNames(loadedProducts, sessionData?.businessState?.categories || [])); setReceiptSettings(normalizeReceiptSettings(sessionData?.businessState?.receiptSettings)); setBusinessReady(true); }} />;
+  if (!account) return <Login initialError={accessError} onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; const loadedSales = sessionData?.businessState?.sales || []; const loadedCategories = categoryNames(loadedProducts, sessionData?.businessState?.categories || []); const loadedSettings = normalizeReceiptSettings(sessionData?.businessState?.receiptSettings); serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; lastSavedState.current = businessStateSignature(loadedProducts, loadedSales, loadedCategories, loadedSettings); setAccessError(''); setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(loadedSales); setCategories(loadedCategories); setReceiptSettings(loadedSettings); setBusinessReady(true); }} />;
   const logout = async () => { try { await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }); } catch { /* También permite salir sin conexión. */ } window.localStorage.removeItem(scopedStorageKey(OFFLINE_SNAPSHOT)); window.localStorage.removeItem(scopedStorageKey(OFFLINE_SALES)); setBusinessReady(false); setAccount(null); setProducts([]); setCategories([]); setReceiptSettings(DEFAULT_RECEIPT_SETTINGS); setSalesHistory([]); setCart({}); setCartPrices({}); };
   return <main className="app-shell min-h-screen bg-[#f5f7fa] text-slate-950">
     <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-800 bg-[#101827] p-5 text-slate-300 lg:flex lg:flex-col">
@@ -337,7 +346,7 @@ export default function Home() {
         {section === 'Ventas' && <SalesHistory receiptSettings={receiptSettings} canDelete={online} isWorker={activeRole === 'worker'} onNotify={async (alert: any) => { const created = { id: Date.now(), type: alert.type, severity: alert.severity || 'info', message: alert.text, actor_name: account.name, entity_type: alert.entityType, entity_id: alert.entityId, details: alert.details || {}, createdAt: new Date().toISOString() }; const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'notify-owner', ...alert }) }); if (response.ok) setNotifications((old) => [created, ...old]); }} sales={salesHistory} onDelete={async (sale: any) => { if (sale.payment === 'Efectivo' && Number(sale.total) > 0) { const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'void-cash-sale', amount: sale.total }) }); const result = await response.json(); if (!response.ok) return setNotice(result.error || 'No fue posible ajustar la caja.'); setCashShift(result.shift); } setProducts((old) => old.map((product) => { const item = sale.items.find((line: any) => line.id === product.id); return item ? { ...product, stock: product.stock + item.qty } : product; })); if (sale.payment === 'Efectivo' && Number(sale.total) > 0) setCash((old) => Math.max(0, old - sale.total)); setSalesHistory((old) => old.filter((item) => item.number !== sale.number)); setNotice(`Venta ${sale.number} eliminada y existencias restauradas.`); }} />}
         {section === 'Inventario' && <Inventory products={products} categories={categories} onNotice={setNotice} canManage={online && (activeRole === 'owner' || currentWorkerPermissions.includes('Inventario'))} canDelete={online && activeRole === 'owner'} canEditCategories={online && activeRole === 'owner'} canDeleteCategories={online && activeRole === 'owner'} canSeeCosts={activeRole === 'owner' || currentWorkerPermissions.includes('Inventario') || currentWorkerPermissions.includes('Ver costos y márgenes')} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} addCategory={(name: string) => setCategories(old => categoryNames([], [...old, name]))} renameCategory={(oldName: string, newName: string) => { setCategories(old => categoryNames([], old.map(category => category === oldName ? newName : category))); setProducts(old => old.map(product => product.category === oldName ? { ...product, category: newName } : product)); }} removeCategory={(name: string) => { setCategories(old => old.filter(category => category !== name)); setProducts(old => old.map(product => product.category === name ? { ...product, category: 'Sin categoría' } : product)); }} add={(product) => setProducts((old) => [...old, product])} update={(product) => setProducts((old) => old.map((p) => p.id === product.id ? product : p))} remove={(id) => setProducts((old) => old.filter((p) => p.id !== id))} />}
         {section === 'Órdenes de servicio' && <ServiceOrders receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} isOwner={activeRole === 'owner'} />}
-        {section === 'Devoluciones y ajustes' && <ReturnsAdjustments receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} onBusinessState={(state: any) => { if (!state) return; serverUpdatedAt.current = state.updatedAt || serverUpdatedAt.current; setProducts(state.products || []); setSalesHistory(state.sales || []); setCategories(categoryNames(state.products || [], state.categories || [])); setReceiptSettings(normalizeReceiptSettings(state.receiptSettings)); }} />}
+        {section === 'Devoluciones y ajustes' && <ReturnsAdjustments receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} onBusinessState={(state: any) => { if (!state) return; const updatedProducts = state.products || []; const updatedSales = state.sales || []; const updatedCategories = categoryNames(updatedProducts, state.categories || []); const updatedSettings = normalizeReceiptSettings(state.receiptSettings); serverUpdatedAt.current = state.updatedAt || serverUpdatedAt.current; lastSavedState.current = businessStateSignature(updatedProducts, updatedSales, updatedCategories, updatedSettings); setProducts(updatedProducts); setSalesHistory(updatedSales); setCategories(updatedCategories); setReceiptSettings(updatedSettings); }} />}
         <div className={section === 'Caja y movimientos' ? '' : 'hidden'}><CashManagement shift={cashShift} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} canManageCash={activeRole === 'owner'} canRecordMovements={activeRole === 'owner' || currentWorkerPermissions.includes('Caja y movimientos')} onShiftChange={setCashShift} onNotice={setNotice} /></div>
         {section === 'Reportes' && <ReportsDashboard products={products} sales={salesHistory} />}
         {section === 'Pago de técnicos' && activeRole === 'owner' && <EmployeePayroll onNotice={setNotice} onCashShift={setCashShift} receiptSettings={receiptSettings} />}
