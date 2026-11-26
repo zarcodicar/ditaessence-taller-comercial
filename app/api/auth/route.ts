@@ -81,13 +81,16 @@ async function initializeTables() {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_employee_payroll (employee_id INTEGER PRIMARY KEY, salary REAL NOT NULL DEFAULT 0, updated_by_name TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_returns (id BIGSERIAL PRIMARY KEY, return_type TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL, source_number TEXT NOT NULL, amount INTEGER NOT NULL, payment_method TEXT NOT NULL, reason TEXT NOT NULL, restock INTEGER NOT NULL DEFAULT 0, items TEXT NOT NULL DEFAULT '[]', actor_name TEXT NOT NULL, shift_id INTEGER, created_at TEXT NOT NULL)"),
   ]);
-  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_cash_shifts_single_open ON pos_cash_shifts(status) WHERE status='open'").run();
   // Migración aditiva y reversible: conserva los datos existentes bajo el
   // negocio inicial. Las rutas se irán acotando por business_id antes de abrir
   // el aprovisionamiento comercial.
   for (const table of ['pos_users','pos_employees','pos_sessions','pos_notifications','pos_cash_shifts','pos_cash_movements','pos_business_state','pos_synced_sales','pos_service_orders','pos_service_order_events','pos_service_payments','pos_service_parts','pos_service_settings','pos_service_technician_commissions','pos_employee_payroll','pos_returns','pos_service_photos','pos_technician_settlements','pos_technician_settlement_items']) {
     try { await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN business_id BIGINT NOT NULL DEFAULT 1`).run(); } catch { /* La columna ya existe. */ }
   }
+  // Antes solo podía existir una caja abierta para toda la aplicación. Ahora
+  // cada negocio conserva su propia caja, sin bloquear a los demás.
+  await env.DB.prepare('DROP INDEX IF EXISTS idx_pos_cash_shifts_single_open').run();
+  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_cash_shifts_single_open ON pos_cash_shifts(business_id) WHERE status='open'").run();
   // Solo cambia el nombre heredado de la demostración comercial. Los negocios
   // reales que tengan un nombre propio no se modifican.
   try {
@@ -365,7 +368,7 @@ export async function POST(request: Request) {
     const openingAmount = Math.round(Number(data.openingAmount)); if (!Number.isFinite(openingAmount) || openingAmount < 0) return json({ error: 'Ingresa un fondo inicial válido.' }, 400);
     const existing = await activeCashShift(actor); if (existing) return json({ shift: existing, alreadyOpen: true });
     try {
-      const result = await env.DB.prepare("INSERT INTO pos_cash_shifts (status, opened_by_user_id, opened_by_name, opening_amount, cash_sales, cash_entries, cash_outs, opened_at) VALUES ('open', ?, ?, ?, 0, 0, 0, ?)").bind(actor.id, actor.name, openingAmount, now()).run();
+      const result = await env.DB.prepare("INSERT INTO pos_cash_shifts (business_id, status, opened_by_user_id, opened_by_name, opening_amount, cash_sales, cash_entries, cash_outs, opened_at) VALUES (?, 'open', ?, ?, ?, 0, 0, 0, ?)").bind(actor.businessId, actor.id, actor.name, openingAmount, now()).run();
       if (actor.role === 'worker') await env.DB.prepare('INSERT INTO pos_notifications (type, severity, message, actor_name, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('Apertura de caja', 'info', `${actor.name} abrió la caja principal.`, actor.name, 'turno de caja', String(result.meta.last_row_id), JSON.stringify({ fondo_inicial: cop(openingAmount) }), now()).run();
       return json({ shift: await activeCashShift(actor) }, 201);
     } catch {
@@ -376,7 +379,7 @@ export async function POST(request: Request) {
     const actor = await current(request); if (!actor || (actor.role !== 'owner' && !actor.permissions?.includes('Punto de venta'))) return json({ error: 'No tienes permiso para registrar ventas.' }, 403);
     const amount = Math.round(Number(data.amount)); if (!Number.isFinite(amount) || amount < 0) return json({ error: 'Monto de venta no válido.' }, 400);
     if (amount === 0) return json({ shift: await activeCashShift(actor) });
-    const shift = await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>(); if (!shift) return json({ error: 'La caja está cerrada.' }, 409);
+    const shift = await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(actor.businessId).first<any>(); if (!shift) return json({ error: 'La caja está cerrada.' }, 409);
     await env.DB.prepare("UPDATE pos_cash_shifts SET cash_sales=cash_sales+? WHERE id=? AND status='open'").bind(amount, shift.id).run();
     return json({ shift: await activeCashShift(actor) });
   }
@@ -403,7 +406,7 @@ export async function POST(request: Request) {
         if (!clientId || clientId.length > 120 || !Number.isInteger(shiftId) || shiftId < 1) return { error: 'Una venta pendiente no contiene una identificación válida.', status: 400 };
         const previous = await db.prepare('SELECT sale_number FROM pos_synced_sales WHERE client_id=?').bind(clientId).first<{ sale_number: string }>();
         if (previous) { synced.push({ clientId, number: previous.sale_number }); continue; }
-        const shift = await db.prepare('SELECT id, status FROM pos_cash_shifts WHERE id=?').bind(shiftId).first<any>();
+        const shift = await db.prepare('SELECT id, status FROM pos_cash_shifts WHERE id=? AND business_id=?').bind(shiftId, actor.businessId).first<any>();
         if (!shift) return { error: 'No encontramos el turno de caja asociado con una venta pendiente.', status: 409 };
         const items = (Array.isArray(source.items) ? source.items : []).map((item: any) => {
           const originalPrice = Math.max(0, Math.round(Number(item.originalPrice ?? item.price) || 0));
@@ -462,7 +465,7 @@ export async function POST(request: Request) {
   if (data.action === 'void-cash-sale') {
     const actor = await current(request); if (!actor || (actor.role !== 'owner' && !actor.permissions?.includes('Ventas'))) return json({ error: 'No tienes permiso para anular ventas.' }, 403);
     const amount = Math.round(Number(data.amount)); if (!Number.isFinite(amount) || amount <= 0) return json({ error: 'Monto de venta no válido.' }, 400);
-    const shift = await env.DB.prepare("SELECT id, cash_sales FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>(); if (!shift) return json({ error: 'La caja está cerrada. Abre caja para ajustar esta venta.' }, 409);
+    const shift = await env.DB.prepare("SELECT id, cash_sales FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(actor.businessId).first<any>(); if (!shift) return json({ error: 'La caja está cerrada. Abre caja para ajustar esta venta.' }, 409);
     await env.DB.prepare("UPDATE pos_cash_shifts SET cash_sales=GREATEST(0, cash_sales-?) WHERE id=? AND status='open'").bind(amount, shift.id).run();
     return json({ shift: await activeCashShift(actor) });
   }
@@ -484,7 +487,7 @@ export async function POST(request: Request) {
         const previous = await db.prepare('SELECT id,order_number FROM pos_service_orders WHERE client_ref=?').bind(clientRef).first<any>();
         if (previous) return {id:previous.id,orderNumber:previous.order_number};
       }
-      const cashShift = initialPayment > 0 ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").first<any>() : null;
+      const cashShift = initialPayment > 0 ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").bind(actor.businessId).first<any>() : null;
       if (initialPayment > 0 && !cashShift) throw new Error('Abre caja antes de registrar un abono.');
       const next = await db.prepare('SELECT COALESCE(MAX(id),0)+1 AS number FROM pos_service_orders').first<any>();
       const orderNumber = String(Number(next?.number || 1)).padStart(3, '0');
@@ -601,7 +604,7 @@ export async function POST(request: Request) {
     const paymentMethod=String(data.paymentMethod||'Efectivo');
     if(status==='Entregado'&&!['Efectivo','Tarjeta','Transferencia'].includes(paymentMethod)) return json({error:'Selecciona un medio de pago válido.'},400);
     const outstanding=Math.max(0,finalTotal-Number(order.paid_total||0));
-    const shift=status==='Entregado'&&outstanding>0?await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>():null;
+    const shift=status==='Entregado'&&outstanding>0?await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(actor.businessId).first<any>():null;
     if(status==='Entregado'&&outstanding>0&&!shift)return json({error:'Abre la caja antes de entregar para registrar automáticamente el pago.'},409);
     const updates:any[]=[env.DB.prepare("UPDATE pos_service_orders SET status=?,updated_at=?,delivered_at=CASE WHEN ?='Entregado' THEN ? ELSE delivered_at END,final_total=CASE WHEN ?='Entregado' THEN ? ELSE final_total END,parts_cost=CASE WHEN ?='Entregado' THEN ? ELSE parts_cost END,delivery_recipient=CASE WHEN ?='Entregado' THEN ? ELSE delivery_recipient END,delivery_document=CASE WHEN ?='Entregado' THEN ? ELSE delivery_document END,delivery_notes=CASE WHEN ?='Entregado' THEN ? ELSE delivery_notes END WHERE id=?").bind(status,changedAt,status,changedAt,status,finalTotal,status,deliveredPartsCost,status,recipient,status,recipientDocument,status,deliveryNotes,id),env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,from_status,to_status,note,actor_name,created_at) VALUES (?,'Cambio de estado',?,?,?,?,?)").bind(id,order.status,status,note,actor.name,changedAt)];
     if(status==='Entregado') updates.push(env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,note,actor_name,created_at) VALUES (?,'Salida / entrega',?,?,?)").bind(id,`Equipo entregado a ${recipient}${recipientDocument?` · Documento: ${recipientDocument}`:''}${deliveryNotes?` · ${deliveryNotes}`:''}.`,actor.name,changedAt));
@@ -616,7 +619,7 @@ export async function POST(request: Request) {
     const orderId=Number(data.orderId);
     if(await env.DB.prepare('SELECT id FROM pos_technician_settlement_items WHERE order_id=?').bind(orderId).first()) return json({error:'Registra el pago desde Pago de técnicos para conservar su liquidación.'},409);
     const order=await env.DB.prepare("SELECT order_number,technician_name,commission_amount,commission_status FROM pos_service_orders WHERE id=?").bind(orderId).first<any>(); if(!order)return json({error:'No encontramos esa orden.'},404); if(order.commission_status!=='pending')return json({error:'Esta comisión no está pendiente.'},409);
-    const shift=await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>(); if(!shift)return json({error:'Abre la caja para registrar el pago de la comisión.'},409); const paidAt=now(),amount=Number(order.commission_amount||0),reason=`Comisión ${order.order_number} · ${order.technician_name}`;
+    const shift=await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(owner.businessId).first<any>(); if(!shift)return json({error:'Abre la caja para registrar el pago de la comisión.'},409); const paidAt=now(),amount=Number(order.commission_amount||0),reason=`Comisión ${order.order_number} · ${order.technician_name}`;
     await env.DB.batch([env.DB.prepare("UPDATE pos_service_orders SET commission_status='paid',commission_paid_at=?,commission_paid_by_name=?,updated_at=? WHERE id=?").bind(paidAt,owner.name,paidAt,orderId),env.DB.prepare("INSERT INTO pos_cash_movements (shift_id,type,amount,reason,actor_name,created_at) VALUES (?,'out',?,?,?,?)").bind(shift.id,amount,reason,owner.name,paidAt),env.DB.prepare("UPDATE pos_cash_shifts SET cash_outs=cash_outs+? WHERE id=?").bind(amount,shift.id),env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,note,actor_name,created_at) VALUES (?,'Pago de comisión',?,?,?)").bind(orderId,`${cop(amount)} pagados a ${order.technician_name}.`,owner.name,paidAt)]);
     return json({ok:true,cashShift:await activeCashShift(owner)});
   }
@@ -625,7 +628,7 @@ export async function POST(request: Request) {
     const id = Number(data.orderId), amount = Math.round(Number(data.amount)), method = String(data.paymentMethod || ''), kind = data.kind === 'Saldo' ? 'Saldo' : 'Anticipo';
     if (!Number.isInteger(id) || !Number.isFinite(amount) || amount <= 0 || !['Efectivo','Tarjeta','Transferencia'].includes(method)) return json({ error: 'Completa un pago válido.' }, 400);
     const order = await env.DB.prepare('SELECT order_number,status FROM pos_service_orders WHERE id=?').bind(id).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
-    const shift = await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>(); if (!shift) return json({ error: 'Abre la caja antes de registrar un pago.' }, 409);
+    const shift = await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(actor.businessId).first<any>(); if (!shift) return json({ error: 'Abre la caja antes de registrar un pago.' }, 409);
     const column = method === 'Efectivo' ? 'repair_cash_income' : method === 'Tarjeta' ? 'repair_card_income' : 'repair_transfer_income'; const createdAt = now();
     await env.DB.batch([env.DB.prepare('INSERT INTO pos_service_payments (order_id,shift_id,kind,payment_method,amount,actor_name,created_at) VALUES (?,?,?,?,?,?,?)').bind(id,shift.id,kind,method,amount,actor.name,createdAt),env.DB.prepare(`UPDATE pos_cash_shifts SET ${column}=${column}+? WHERE id=? AND status='open'`).bind(amount,shift.id),env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,note,actor_name,created_at) VALUES (?,'Pago',?,?,?)").bind(id,`${kind} por ${cop(amount)} mediante ${method}.`,actor.name,createdAt)]);
     if (actor.role === 'worker') await env.DB.prepare('INSERT INTO pos_notifications (type,severity,message,actor_name,entity_type,entity_id,details,created_at) VALUES (?,?,?,?,?,?,?,?)').bind('Pago de reparación','info',`${actor.name} registró un ${kind.toLowerCase()} en ${order.order_number}.`,actor.name,'orden de servicio',order.order_number,JSON.stringify({ tipo:kind,valor:cop(amount),medio:method }),createdAt).run();
