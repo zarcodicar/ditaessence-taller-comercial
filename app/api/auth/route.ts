@@ -55,12 +55,12 @@ async function validPassword(password: string, saved: string) {
 let schemaReady:Promise<void>|null=null;
 async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>{schemaReady=null;throw e});await schemaReady;}
 const demoProducts = [
-  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables' },
-  { id: 102, name: 'Cargador rápido 25 W USB-C', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores' },
-  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección' },
-  { id: 104, name: 'Audífonos Bluetooth AirBeat', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio' },
-  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas' },
-  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores' },
+  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?auto=format&fit=crop&w=640&q=82' },
+  { id: 102, name: 'Cargador rápido 25 W USB-C', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores', image: 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=640&q=82' },
+  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=640&q=82' },
+  { id: 104, name: 'Audífonos Bluetooth AirBeat', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio', image: 'https://images.unsplash.com/photo-1640901821270-6e9c47fbdc07?auto=format&fit=crop&w=640&q=82' },
+  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=640&q=82' },
+  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores', image: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&w=640&q=82' },
 ];
 const demoSales = [
   { clientId: 'demo-sale-001', number: 'V-00001', createdAt: '2026-11-26T09:14:00.000Z', date: '2026-11-26', payment: 'Efectivo', paymentBreakdown: { Efectivo: 67000 }, total: 67000, items: [{ id: 101, name: 'Cable USB-C reforzado 1 m', qty: 1, price: 18000, originalPrice: 18000, cost: 8500 }, { id: 102, name: 'Cargador rápido 25 W USB-C', qty: 1, price: 49000, originalPrice: 49000, cost: 28000 }] },
@@ -73,7 +73,18 @@ async function seedDemoData() {
   await env.DB.transaction(async db => {
     await db.prepare('INSERT INTO pos_business_state (id,business_id,products,sales,categories,receipt_settings,category_catalog_version,updated_at) VALUES (?,?,?,?,?,?,1,?) ON CONFLICT (id) DO NOTHING').bind(businessId,businessId,'[]','[]','[]',JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now()).run();
     const state = await db.prepare('SELECT products,sales FROM pos_business_state WHERE business_id=? FOR UPDATE').bind(businessId).first<any>();
-    if (!JSON.parse(state?.products || '[]').length) await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Audio','Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
+    const savedProducts = JSON.parse(state?.products || '[]');
+    if (!savedProducts.length) {
+      await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Audio','Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
+    } else {
+      // Las demostraciones creadas antes de añadir fotografías se actualizan
+      // sin tocar precios, existencias ni ventas que el visitante haya usado.
+      const hydratedProducts = savedProducts.map((product: any) => {
+        const example = demoProducts.find(item => item.id === Number(product.id));
+        return example && !String(product.image || '').trim() ? { ...product, image: example.image } : product;
+      });
+      if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts)) await db.prepare('UPDATE pos_business_state SET products=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),now(),businessId).run();
+    }
     const shift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
     if (!shift) await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',200000,87000,97000,47000,4,6,0,0,?)").bind(businessId,now()).run();
     const orders = await db.prepare('SELECT COUNT(*) AS count FROM pos_service_orders WHERE business_id=?').bind(businessId).first<any>();
@@ -90,6 +101,37 @@ async function seedDemoData() {
         const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,String(orderNumber || ''),String(customerName || ''),String(customerPhone || ''),String(customerDocument || ''),String(deviceType || 'Otro'),String(deviceBrand || ''),String(deviceModel || ''),String(deviceIdentifier || ''),String(physicalCondition || ''),String(reportedIssue || ''),String(plannedService || ''),String(status || 'Recibido'),Number(estimatedTotal || 0),Number(partsCost || 0),Number(finalTotal || 0),1,'Demostración',createdAt,createdAt).run();
       }
     }
+    const demoTechnicians = [
+      { name: 'Valentina Moreno', phone: '300 555 0191', document: '1032456789', commission: 35 },
+      { name: 'Samuel Ortiz', phone: '300 555 0192', document: '1019876543', commission: 30 },
+    ];
+    const technicians: Record<string, any> = {};
+    for (const technician of demoTechnicians) {
+      let row = await db.prepare('SELECT id,name FROM pos_employees WHERE business_id=? AND name=? LIMIT 1').bind(businessId,technician.name).first<any>();
+      if (!row) {
+        const created = await db.prepare("INSERT INTO pos_employees (business_id,name,phone,document,position,is_technician,active,created_at,updated_at) VALUES (?,?,?,?,? ,1,1,?,?) RETURNING id,name").bind(businessId,technician.name,technician.phone,technician.document,'Técnico',now(),now()).first<any>();
+        row = created;
+      }
+      if (!row) continue;
+      technicians[technician.name] = row;
+      await db.prepare('INSERT INTO pos_service_technician_commissions (business_id,technician_id,commission_percent,updated_by_name,updated_at) VALUES (?,?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET commission_percent=EXCLUDED.commission_percent,updated_by_name=EXCLUDED.updated_by_name,updated_at=EXCLUDED.updated_at').bind(businessId,row.id,technician.commission,'Demostración',now()).run();
+    }
+    const valentina = technicians['Valentina Moreno'];
+    const samuel = technicians['Samuel Ortiz'];
+    if (valentina) {
+      await db.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_percent=35,commission_base=125000,commission_amount=43750,commission_status='pending',commission_settled_at=COALESCE(commission_settled_at,?),repair_completed_at=COALESCE(repair_completed_at,?),updated_at=? WHERE business_id=? AND order_number='OS-001'").bind(valentina.id,valentina.name,'2026-11-25T15:40:00.000Z','2026-11-25T15:40:00.000Z',now(),businessId).run();
+    }
+    if (samuel) {
+      await db.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_percent=30,commission_base=125000,commission_amount=37500,commission_status='paid',commission_settled_at=COALESCE(commission_settled_at,?),commission_paid_at=COALESCE(commission_paid_at,?),commission_paid_by_name=COALESCE(NULLIF(commission_paid_by_name,''),'Administración'),repair_completed_at=COALESCE(repair_completed_at,?),delivered_at=COALESCE(delivered_at,?),updated_at=? WHERE business_id=? AND order_number='OS-004'").bind(samuel.id,samuel.name,'2026-11-24T16:20:00.000Z','2026-11-24T17:05:00.000Z','2026-11-24T15:30:00.000Z','2026-11-24T16:40:00.000Z',now(),businessId).run();
+      const paidOrder = await db.prepare("SELECT id,order_number,final_total,parts_cost,commission_percent,commission_amount FROM pos_service_orders WHERE business_id=? AND order_number='OS-004'").bind(businessId).first<any>();
+      const settlement = await db.prepare('SELECT id FROM pos_technician_settlements WHERE business_id=? AND technician_id=? LIMIT 1').bind(businessId,samuel.id).first<any>();
+      if (paidOrder && !settlement) {
+        const createdSettlement = await db.prepare("INSERT INTO pos_technician_settlements (business_id,technician_id,technician_name,total,note,created_at,created_by,paid_at,paid_by,payment_method,shift_id) VALUES (?,?,?,?,?,?,?,?,?,?,NULL) RETURNING id").bind(businessId,samuel.id,samuel.name,Number(paidOrder.commission_amount || 0),'Liquidación de reparación entregada · demostración','2026-11-24T17:05:00.000Z','Administración','2026-11-24T17:05:00.000Z','Administración','Transferencia').first<any>();
+        if (createdSettlement) await db.prepare('INSERT INTO pos_technician_settlement_items (business_id,settlement_id,order_id,order_number,final_total,parts_cost,commission_percent,commission_amount) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (order_id) DO NOTHING').bind(businessId,createdSettlement.id,paidOrder.id,paidOrder.order_number,paidOrder.final_total,paidOrder.parts_cost,paidOrder.commission_percent,paidOrder.commission_amount).run();
+      }
+    }
+    const existingReturn = await db.prepare("SELECT id FROM pos_returns WHERE business_id=? AND source_type='sale' AND source_id='demo-sale-002' LIMIT 1").bind(businessId).first<any>();
+    if (!existingReturn) await db.prepare("INSERT INTO pos_returns (business_id,return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES (?,'sale_return','sale','demo-sale-002','V-00002',78000,'Tarjeta','El producto no era compatible con el equipo del cliente.',1,?,'Sofía Herrera',NULL,?)").bind(businessId,JSON.stringify([{ id: 104, name: 'Audífonos Bluetooth AirBeat', qty: 1, price: 78000 }]),'2026-11-26T10:28:00.000Z').run();
   });
 }
 async function initializeTables() {
