@@ -193,7 +193,7 @@ async function initializeTables() {
   await ensureLedger(env.DB);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS pos_service_photos (id BIGSERIAL PRIMARY KEY,order_id BIGINT NOT NULL,image TEXT NOT NULL)').run();
   await env.DB.batch([
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS pos_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL, permissions TEXT NOT NULL DEFAULT \'[]\', created_at TEXT NOT NULL)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS pos_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, permissions TEXT NOT NULL DEFAULT \'[]\', created_at TEXT NOT NULL)'),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_employees (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', document TEXT NOT NULL DEFAULT '', position TEXT NOT NULL DEFAULT '', is_technician INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS pos_sessions (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)'),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS pos_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'info', message TEXT NOT NULL, actor_name TEXT NOT NULL, entity_type TEXT, entity_id TEXT, details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, read_at TEXT)"),
@@ -216,6 +216,12 @@ async function initializeTables() {
   for (const table of ['pos_users','pos_employees','pos_sessions','pos_notifications','pos_cash_shifts','pos_cash_movements','pos_business_state','pos_synced_sales','pos_service_orders','pos_service_order_events','pos_service_payments','pos_service_parts','pos_service_settings','pos_service_technician_commissions','pos_employee_payroll','pos_returns','pos_service_photos','pos_technician_settlements','pos_technician_settlement_items']) {
     try { await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN business_id BIGINT NOT NULL DEFAULT 1`).run(); } catch { /* La columna ya existe. */ }
   }
+  // El usuario solo debe ser único dentro de su propio negocio. La restricción
+  // antigua era global y bloqueaba, por ejemplo, que dos clientes distintos
+  // usaran el mismo usuario de administrador. PostgreSQL crea esta restricción
+  // con este nombre para la columna definida como UNIQUE.
+  try { await env.DB.prepare('ALTER TABLE pos_users DROP CONSTRAINT IF EXISTS pos_users_username_key').run(); } catch { /* Instalaciones antiguas compatibles. */ }
+  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_users_business_username ON pos_users(business_id, username)').run();
   // Antes solo podía existir una caja abierta para toda la aplicación. Ahora
   // cada negocio conserva su propia caja, sin bloquear a los demás.
   await env.DB.prepare('DROP INDEX IF EXISTS idx_pos_cash_shifts_single_open').run();
