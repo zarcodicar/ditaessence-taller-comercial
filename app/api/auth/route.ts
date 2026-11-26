@@ -55,16 +55,14 @@ async function validPassword(password: string, saved: string) {
 let schemaReady:Promise<void>|null=null;
 async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>{schemaReady=null;throw e});await schemaReady;}
 const demoProducts = [
-  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?auto=format&fit=crop&w=640&q=82' },
+  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: 'https://i5.walmartimages.com/asr/7c30a1e2-f4fa-4e7f-8c11-c63c3ab2ed87.0bb3eccd0ccd340928bb9078b4fd91b0.jpeg' },
   { id: 102, name: 'Cargador USB-C reforzado 25 W', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores', image: 'https://storage.googleapis.com/bpv/charger-usb-cable-type-c-white-isolated-background.exact1600w.jpg' },
-  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=640&q=82' },
-  { id: 104, name: 'Audífonos Bluetooth AirBeat', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio', image: 'https://images.unsplash.com/photo-1640901821270-6e9c47fbdc07?auto=format&fit=crop&w=640&q=82' },
-  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=640&q=82' },
-  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores', image: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&w=640&q=82' },
+  { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: 'https://assets.spares.nu/products/gallery/7aa96723-8709-4036-9843-5d55f19e8dca.jpg' },
+  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: 'https://codiworldwide.com/cdn/shop/files/product_i13_6.1_bumper_black_01.png?v=1737131669' },
+  { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores', image: 'https://kmartau.mo.cloudinary.net/c7c3d531-a2d6-41f2-8531-d2655f85231a.jpg?tx=w_3840%2Ch_3840' },
 ];
 const demoSales = [
   { clientId: 'demo-sale-001', number: 'V-00001', createdAt: '2026-11-26T09:14:00.000Z', date: '2026-11-26', payment: 'Efectivo', paymentBreakdown: { Efectivo: 67000 }, total: 67000, items: [{ id: 101, name: 'Cable USB-C reforzado 1 m', qty: 1, price: 18000, originalPrice: 18000, cost: 8500 }, { id: 102, name: 'Cargador rápido 25 W USB-C', qty: 1, price: 49000, originalPrice: 49000, cost: 28000 }] },
-  { clientId: 'demo-sale-002', number: 'V-00002', createdAt: '2026-11-26T10:02:00.000Z', date: '2026-11-26', payment: 'Tarjeta', paymentBreakdown: { Tarjeta: 78000 }, total: 78000, items: [{ id: 104, name: 'Audífonos Bluetooth AirBeat', qty: 1, price: 78000, originalPrice: 78000, cost: 44000 }] },
   { clientId: 'demo-sale-003', number: 'V-00003', createdAt: '2026-11-26T11:20:00.000Z', date: '2026-11-26', payment: 'Transferencia', paymentBreakdown: { Transferencia: 47000 }, total: 47000, items: [{ id: 103, name: 'Vidrio templado Samsung A54', qty: 1, price: 15000, originalPrice: 15000, cost: 4200 }, { id: 105, name: 'Funda antigolpes iPhone 13', qty: 1, price: 32000, originalPrice: 32000, cost: 14500 }] },
   { clientId: 'demo-sale-004', number: 'V-00004', createdAt: '2026-11-26T12:05:00.000Z', date: '2026-11-26', payment: 'Pago dividido', paymentBreakdown: { Efectivo: 20000, Tarjeta: 19000 }, total: 39000, items: [{ id: 106, name: 'Mouse inalámbrico compacto', qty: 1, price: 39000, originalPrice: 39000, cost: 21000 }] },
 ];
@@ -75,17 +73,16 @@ async function seedDemoData() {
     const state = await db.prepare('SELECT products,sales FROM pos_business_state WHERE business_id=? FOR UPDATE').bind(businessId).first<any>();
     const savedProducts = JSON.parse(state?.products || '[]');
     if (!savedProducts.length) {
-      await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Audio','Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
+      await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,receipt_settings=?,category_catalog_version=1,updated_at=? WHERE business_id=?').bind(JSON.stringify(demoProducts),JSON.stringify(demoSales),JSON.stringify(['Cables','Cargadores','Computadores','Fundas','Protección']),JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName: 'DTC Stage · Demostración', phone: '300 555 0148', address: 'Bogotá, Colombia' }),now(),businessId).run();
     } else {
-      // Las demostraciones creadas antes de añadir fotografías se actualizan
-      // sin tocar precios, existencias ni ventas que el visitante haya usado.
+      // El catálogo de prueba se mantiene coherente con las fotografías
+      // correspondientes a cada producto mostrado al visitante.
       const hydratedProducts = savedProducts.map((product: any) => {
         const example = demoProducts.find(item => item.id === Number(product.id));
-        const isUpdatedCharger = Number(product.id) === 102;
-        if (!example || (String(product.image || '').trim() && !isUpdatedCharger)) return product;
-        return { ...product, image: example.image, ...(isUpdatedCharger ? { name: example.name } : {}) };
-      });
-      if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts)) await db.prepare('UPDATE pos_business_state SET products=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),now(),businessId).run();
+        return example ? { ...product, image: example.image, name: example.name } : null;
+      }).filter(Boolean);
+      const hydratedSales = JSON.parse(state?.sales || '[]').filter((sale: any) => sale.clientId !== 'demo-sale-002');
+      if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts) || hydratedSales.length !== JSON.parse(state?.sales || '[]').length) await db.prepare('UPDATE pos_business_state SET products=?,sales=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),JSON.stringify(hydratedSales),now(),businessId).run();
     }
     const shift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
     if (!shift) await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',200000,87000,97000,47000,4,6,0,0,?)").bind(businessId,now()).run();
@@ -152,8 +149,10 @@ async function seedDemoData() {
       }
     }
     demoStep = 'devolución';
-    const existingReturn = await db.prepare("SELECT id FROM pos_returns WHERE business_id=? AND source_type='sale' AND source_id='demo-sale-002' LIMIT 1").bind(businessId).first<any>();
-    if (!existingReturn) await db.prepare("INSERT INTO pos_returns (business_id,return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES (?,'sale_return','sale','demo-sale-002','V-00002',78000,'Tarjeta','El producto no era compatible con el equipo del cliente.',1,?,'Sofía Herrera',NULL,?)").bind(businessId,JSON.stringify([{ id: 104, name: 'Audífonos Bluetooth AirBeat', qty: 1, price: 78000 }]),'2026-11-26T10:28:00.000Z').run();
+    const returnItems = JSON.stringify([{ id: 105, name: 'Funda antigolpes iPhone 13', qty: 1, price: 32000 }]);
+    const existingReturn = await db.prepare("SELECT id FROM pos_returns WHERE business_id=? AND source_type='sale' AND source_id IN ('demo-sale-002','demo-sale-003') LIMIT 1").bind(businessId).first<any>();
+    if (existingReturn) await db.prepare("UPDATE pos_returns SET source_id='demo-sale-003',source_number='V-00003',amount=32000,payment_method='Transferencia',reason='La funda no era compatible con el modelo del cliente.',restock=1,items=?,actor_name='Sofía Herrera' WHERE id=?").bind(returnItems,existingReturn.id).run();
+    else await db.prepare("INSERT INTO pos_returns (business_id,return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES (?,'sale_return','sale','demo-sale-003','V-00003',32000,'Transferencia','La funda no era compatible con el modelo del cliente.',1,?,'Sofía Herrera',NULL,?)").bind(businessId,returnItems,'2026-11-26T10:28:00.000Z').run();
     } catch (error: any) {
       throw new Error(`No pudimos preparar ${demoStep} de demostración: ${error?.message || 'error desconocido'}`);
     }
