@@ -421,6 +421,7 @@ export async function GET(request: Request) {
   }
   if (url.searchParams.get('resource') === 'backup') {
     if (!user || user.role !== 'owner') return json({ error: 'Solo el propietario puede descargar respaldos.' }, 403);
+    if (Number(user.businessId) !== 1) return json({ error: 'El respaldo individual se habilitará al completar su migración segura.' }, 503);
     const [users, employees, notifications, shifts, movements, businessState, syncedSales, serviceOrders, serviceEvents, servicePayments, serviceParts, serviceSettings, serviceTechnicianCommissions, technicianSettlements, technicianSettlementItems, servicePhotos, returns] = await Promise.all([
       env.DB.prepare('SELECT id, name, username, password_hash, role, permissions, created_at FROM pos_users ORDER BY id').all<any>(),
       env.DB.prepare('SELECT * FROM pos_employees ORDER BY id').all<any>(),
@@ -808,20 +809,20 @@ export async function POST(request: Request) {
     if (!Number.isInteger(orderId) || amount <= 0 || !['Efectivo','Tarjeta','Transferencia'].includes(method) || !reason) return json({ error: 'Completa orden, valor, medio de devolución y motivo.' }, 400);
     const result = await env.DB.transaction(async db => {
       const order = await db.prepare(`SELECT o.id,o.order_number,o.status,o.commission_status,COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.order_id=o.id),0) AS paid_total,
-        COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.source_type='service_order' AND r.source_id=o.id::text),0) AS returned_total FROM pos_service_orders o WHERE o.id=? FOR UPDATE`).bind(orderId).first<any>();
+        COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.business_id=o.business_id AND r.source_type='service_order' AND r.source_id=o.id::text),0) AS returned_total FROM pos_service_orders o WHERE o.business_id=? AND o.id=? FOR UPDATE`).bind(actor.businessId,orderId).first<any>();
       if (!order) return { error: 'No encontramos esa orden.', status: 404 };
       if (order.status === 'Entregado') return { error: 'No se puede devolver desde aquí un equipo que ya fue entregado al cliente.', status: 409 };
       if (amount > Number(order.paid_total) - Number(order.returned_total)) return { error: 'El valor supera lo recibido y aún no devuelto en esta orden.', status: 400 };
-      const shift = method === 'Efectivo' ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").first<any>() : null;
+      const shift = method === 'Efectivo' ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").bind(actor.businessId).first<any>() : null;
       if (method === 'Efectivo' && !shift) return { error: 'Abre caja antes de devolver efectivo.', status: 409 };
       const createdAt = now();
-      const insert = await db.prepare("INSERT INTO pos_returns (return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES ('service_refund','service_order',?,?,?,?,?,0,'[]',?,?,?) RETURNING id").bind(String(order.id),order.order_number,amount,method,reason,actor.name,shift?.id || null,createdAt).first<any>();
+      const insert = await db.prepare("INSERT INTO pos_returns (business_id,return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES (?,'service_refund','service_order',?,?,?,?,?,0,'[]',?,?,?) RETURNING id").bind(actor.businessId,String(order.id),order.order_number,amount,method,reason,actor.name,shift?.id || null,createdAt).first<any>();
       const statements = [
         db.prepare("INSERT INTO pos_service_order_events (order_id,event_type,from_status,to_status,note,actor_name,created_at) VALUES (?,'Devolución',?,?,?, ?,?)").bind(order.id,order.status,data.markNoRepair === false ? order.status : 'Sin reparación',`Devolución de ${cop(amount)} por ${method}. Motivo: ${reason}`,actor.name,createdAt),
       ];
       if (data.markNoRepair !== false && order.status !== 'Entregado') statements.push(db.prepare("UPDATE pos_service_orders SET status='Sin reparación',commission_status='not_applicable',commission_amount=0,updated_at=? WHERE id=?").bind(createdAt,order.id));
       if (shift) statements.push(db.prepare("INSERT INTO pos_cash_movements (shift_id,type,amount,reason,actor_name,created_at) VALUES (?,'out',?,?,?,?)").bind(shift.id,amount,`Devolución orden ${order.order_number} · ${reason}`,actor.name,createdAt),db.prepare('UPDATE pos_cash_shifts SET cash_outs=cash_outs+? WHERE id=?').bind(amount,shift.id));
-      statements.push(db.prepare("INSERT INTO pos_notifications (type,severity,message,actor_name,entity_type,entity_id,details,created_at) VALUES (?,?,?,?,?,?,?,?)").bind('Devolución registrada','warning',`${actor.name} registró una devolución de ${cop(amount)} en la orden ${order.order_number}.`,actor.name,'devolución de reparación',order.order_number,JSON.stringify({ motivo: reason, medio: method, valor: cop(amount), orden: order.order_number }),createdAt));
+      statements.push(db.prepare("INSERT INTO pos_notifications (business_id,type,severity,message,actor_name,entity_type,entity_id,details,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(actor.businessId,'Devolución registrada','warning',`${actor.name} registró una devolución de ${cop(amount)} en la orden ${order.order_number}.`,actor.name,'devolución de reparación',order.order_number,JSON.stringify({ motivo: reason, medio: method, valor: cop(amount), orden: order.order_number }),createdAt));
       await db.batch(statements);
       return { record: { id: insert?.id, return_type: 'service_refund', source_number: order.order_number, amount, payment_method: method, reason, actor_name: actor.name, created_at: createdAt }, shift: shift?.id || null };
     });
@@ -834,23 +835,23 @@ export async function POST(request: Request) {
     const requestedItems = Array.isArray(data.items) ? data.items.map((item: any) => ({ id: String(item.id), qty: Math.floor(Number(item.qty) || 0) })).filter((item: any) => item.id && item.qty > 0) : [];
     if (!number || amount <= 0 || !requestedItems.length || !['Efectivo','Tarjeta','Transferencia'].includes(method) || !reason) return json({ error: 'Completa la venta, productos, valor, medio y motivo.' }, 400);
     const result = await env.DB.transaction(async db => {
-      const state = await db.prepare('SELECT products,sales,categories,receipt_settings,updated_at FROM pos_business_state WHERE id=1 FOR UPDATE').first<any>();
+      const state = await db.prepare('SELECT products,sales,categories,receipt_settings,updated_at FROM pos_business_state WHERE business_id=? FOR UPDATE').bind(actor.businessId).first<any>();
       const products = JSON.parse(state?.products || '[]'), sales = JSON.parse(state?.sales || '[]');
       const sale = sales.find((item: any) => String(item.number) === number); if (!sale) return { error: 'No encontramos esa venta.', status: 404 };
-      const old = await db.prepare("SELECT amount,items FROM pos_returns WHERE source_type='sale' AND source_id=?").bind(number).all<any>();
+      const old = await db.prepare("SELECT amount,items FROM pos_returns WHERE business_id=? AND source_type='sale' AND source_id=?").bind(actor.businessId,number).all<any>();
       const returnedAmount = (old.results || []).reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
       if (amount > Number(sale.total || 0) - returnedAmount) return { error: 'El valor supera el saldo que puede devolverse de esta venta.', status: 400 };
       const returnedQty = new Map<string,number>(); for (const row of old.results || []) { try { for (const item of JSON.parse(row.items || '[]')) returnedQty.set(String(item.id), (returnedQty.get(String(item.id)) || 0) + Number(item.qty || 0)); } catch {} }
       const items = requestedItems.map((item: any) => { const sold = (sale.items || []).find((line: any) => String(line.id) === item.id); return { ...item, name: sold?.name || '', price: Number(sold?.price || 0), max: Number(sold?.qty || 0) - (returnedQty.get(item.id) || 0) }; });
       if (items.some((item: any) => !item.name || item.qty > item.max)) return { error: 'Una cantidad supera lo vendido o ya devuelto.', status: 400 };
-      const shift = method === 'Efectivo' ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").first<any>() : null;
+      const shift = method === 'Efectivo' ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").bind(actor.businessId).first<any>() : null;
       if (method === 'Efectivo' && !shift) return { error: 'Abre caja antes de devolver efectivo.', status: 409 };
       const createdAt = now(), restock = data.restock !== false;
       const updatedProducts = restock ? products.map((product: any) => { const item = items.find((line: any) => String(line.id) === String(product.id)); return item ? { ...product, stock: Number(product.stock || 0) + item.qty } : product; }) : products;
-      const insert = await db.prepare("INSERT INTO pos_returns (return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES ('sale_return','sale',?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(number,number,amount,method,reason,restock ? 1 : 0,JSON.stringify(items.map(({max,...item}: any) => item)),actor.name,shift?.id || null,createdAt).first<any>();
-      await db.prepare('UPDATE pos_business_state SET products=?,updated_at=? WHERE id=1').bind(JSON.stringify(updatedProducts),createdAt).run();
+      const insert = await db.prepare("INSERT INTO pos_returns (business_id,return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES (?,'sale_return','sale',?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(actor.businessId,number,number,amount,method,reason,restock ? 1 : 0,JSON.stringify(items.map(({max,...item}: any) => item)),actor.name,shift?.id || null,createdAt).first<any>();
+      await db.prepare('UPDATE pos_business_state SET products=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(updatedProducts),createdAt,actor.businessId).run();
       if (shift) await db.batch([db.prepare("INSERT INTO pos_cash_movements (shift_id,type,amount,reason,actor_name,created_at) VALUES (?,'out',?,?,?,?)").bind(shift.id,amount,`Devolución venta ${number} · ${reason}`,actor.name,createdAt),db.prepare('UPDATE pos_cash_shifts SET cash_outs=cash_outs+? WHERE id=?').bind(amount,shift.id)]);
-      await db.prepare("INSERT INTO pos_notifications (type,severity,message,actor_name,entity_type,entity_id,details,created_at) VALUES (?,?,?,?,?,?,?,?)").bind('Devolución registrada','warning',`${actor.name} registró una devolución de ${cop(amount)} en la venta ${number}.`,actor.name,'devolución de mercancía',number,JSON.stringify({ motivo: reason, medio: method, valor: cop(amount), venta: number }),createdAt).run();
+      await db.prepare("INSERT INTO pos_notifications (business_id,type,severity,message,actor_name,entity_type,entity_id,details,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(actor.businessId,'Devolución registrada','warning',`${actor.name} registró una devolución de ${cop(amount)} en la venta ${number}.`,actor.name,'devolución de mercancía',number,JSON.stringify({ motivo: reason, medio: method, valor: cop(amount), venta: number }),createdAt).run();
       return { record: { id: insert?.id, return_type: 'sale_return', source_number: number, amount, payment_method: method, reason, restock: restock ? 1 : 0, items, actor_name: actor.name, created_at: createdAt }, businessState: { products: updatedProducts, sales, categories: JSON.parse(state?.categories || '[]'), receiptSettings: receiptSettings(JSON.parse(state?.receipt_settings || '{}')), updatedAt: createdAt } };
     });
     if ('error' in result) return json({ error: result.error }, result.status);
@@ -877,6 +878,7 @@ export async function POST(request: Request) {
   }
   if (data.action === 'restore-backup') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede restaurar respaldos.' }, 403);
+    if (Number(owner.businessId) !== 1) return json({ error: 'La restauración individual se habilitará al completar su migración segura.' }, 503);
     const saved = await env.DB.prepare("SELECT password_hash FROM pos_users WHERE id=? AND role='owner'").bind(owner.id).first<{ password_hash: string }>();
     if (!saved || !(await validPassword(String(data.currentPassword || ''), saved.password_hash))) return json({ error: 'La contraseña actual no es correcta.' }, 401);
     const backup = data.backup; const payload = backup?.data;
