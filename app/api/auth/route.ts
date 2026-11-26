@@ -396,10 +396,10 @@ export async function GET(request: Request) {
     const from = String(url.searchParams.get('from') || '').trim();
     const to = String(url.searchParams.get('to') || '').trim();
     const result = await env.DB.prepare(`SELECT o.*,
-      COALESCE((SELECT SUM(p.amount) FROM pos_service_payments p WHERE p.order_id=o.id), 0) AS paid_total,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'kind',p.kind,'payment_method',p.payment_method,'amount',p.amount,'actor_name',p.actor_name,'created_at',p.created_at) ORDER BY p.created_at) FROM pos_service_payments p WHERE p.order_id=o.id), '[]'::jsonb) AS payments,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',sp.id,'amount',sp.amount,'payment_method',sp.payment_method,'supplier',sp.supplier,'note',sp.note,'actor_name',sp.actor_name,'created_at',sp.created_at) ORDER BY sp.id) FROM pos_service_parts sp WHERE sp.order_id=o.id), '[]'::jsonb) AS parts,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e.id,'event_type',e.event_type,'from_status',e.from_status,'to_status',e.to_status,'note',e.note,'actor_name',e.actor_name,'created_at',e.created_at) ORDER BY e.created_at DESC) FROM pos_service_order_events e WHERE e.order_id=o.id), '[]'::jsonb) AS events
+      COALESCE((SELECT SUM(p.amount) FROM pos_service_payments p WHERE p.business_id=o.business_id AND p.order_id=o.id), 0) AS paid_total,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'kind',p.kind,'payment_method',p.payment_method,'amount',p.amount,'actor_name',p.actor_name,'created_at',p.created_at) ORDER BY p.created_at) FROM pos_service_payments p WHERE p.business_id=o.business_id AND p.order_id=o.id), '[]'::jsonb) AS payments,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',sp.id,'amount',sp.amount,'payment_method',sp.payment_method,'supplier',sp.supplier,'note',sp.note,'actor_name',sp.actor_name,'created_at',sp.created_at) ORDER BY sp.id) FROM pos_service_parts sp WHERE sp.business_id=o.business_id AND sp.order_id=o.id), '[]'::jsonb) AS parts,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e.id,'event_type',e.event_type,'from_status',e.from_status,'to_status',e.to_status,'note',e.note,'actor_name',e.actor_name,'created_at',e.created_at) ORDER BY e.created_at DESC) FROM pos_service_order_events e WHERE e.business_id=o.business_id AND e.order_id=o.id), '[]'::jsonb) AS events
       FROM pos_service_orders o
       WHERE o.business_id=?
         AND (? = '' OR lower(o.order_number || ' ' || o.customer_name || ' ' || o.customer_phone || ' ' || o.device_brand || ' ' || o.device_model || ' ' || o.device_identifier) LIKE '%' || ? || '%')
@@ -413,11 +413,11 @@ export async function GET(request: Request) {
     if (!user || !canUseReturns(user)) return json({ error: 'No tienes permiso para gestionar devoluciones.' }, 403);
     const [orders, state, returns] = await Promise.all([
       env.DB.prepare(`SELECT o.id,o.order_number,o.customer_name,o.customer_phone,o.device_brand,o.device_model,o.status,o.final_total,o.estimated_total,
-        COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.order_id=o.id),0) AS paid_total,
-        COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.source_type='service_order' AND r.source_id=o.id::text),0) AS returned_total
+        COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.business_id=o.business_id AND p.order_id=o.id),0) AS paid_total,
+        COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.business_id=o.business_id AND r.source_type='service_order' AND r.source_id=o.id::text),0) AS returned_total
         FROM pos_service_orders o
         WHERE o.business_id=? AND o.status <> 'Entregado'
-          AND COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.order_id=o.id),0) > COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.source_type='service_order' AND r.source_id=o.id::text),0)
+          AND COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.business_id=o.business_id AND p.order_id=o.id),0) > COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.business_id=o.business_id AND r.source_type='service_order' AND r.source_id=o.id::text),0)
         ORDER BY o.id DESC LIMIT 300`).bind(user.businessId).all<any>(),
       env.DB.prepare('SELECT products,sales,categories,receipt_settings,updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>(),
       env.DB.prepare('SELECT * FROM pos_returns WHERE business_id=? ORDER BY created_at DESC LIMIT 300').bind(user.businessId).all<any>(),
@@ -437,7 +437,7 @@ export async function GET(request: Request) {
       COALESCE((SELECT SUM(parts_cost) FROM pos_service_orders so WHERE so.business_id=? AND (?='' OR substr(so.created_at,1,10)>=?) AND (?='' OR substr(so.created_at,1,10)<=?)),0) AS parts_cost,
       COALESCE((SELECT SUM(GREATEST(final_total-COALESCE((SELECT SUM(amount) FROM pos_service_payments sp WHERE sp.business_id=so.business_id AND sp.order_id=so.id),0),0)) FROM pos_service_orders so WHERE so.business_id=? AND so.status NOT IN ('Cancelado','Sin reparación') AND (?='' OR substr(so.created_at,1,10)>=?) AND (?='' OR substr(so.created_at,1,10)<=?)),0) AS pending,
       COALESCE((SELECT SUM(commission_amount) FROM pos_service_orders so WHERE so.business_id=? AND commission_status IN ('pending','paid') AND (?='' OR substr(so.commission_settled_at,1,10)>=?) AND (?='' OR substr(so.commission_settled_at,1,10)<=?)),0) AS technician_commissions
-      FROM pos_service_orders o LEFT JOIN pos_service_payments p ON p.order_id=o.id
+      FROM pos_service_orders o LEFT JOIN pos_service_payments p ON p.business_id=o.business_id AND p.order_id=o.id
       WHERE o.business_id=? AND (?='' OR substr(o.created_at,1,10)>=?) AND (?='' OR substr(o.created_at,1,10)<=?)`).bind(user.businessId,from,from,to,to,user.businessId,from,from,to,to,user.businessId,from,from,to,to,user.businessId,from,from,to,to).first<any>();
     return json({ summary: row || { orders_count: 0, income: 0, parts_cost: 0, pending: 0 } });
   }
