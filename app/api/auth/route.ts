@@ -155,6 +155,12 @@ async function seedDemoData() {
         const createdSettlement = await db.prepare("INSERT INTO pos_technician_settlements (business_id,technician_id,technician_name,total,note,created_at,created_by,paid_at,paid_by,payment_method,shift_id) VALUES (?,?,?,?,?,?,?,?,?,?,NULL) RETURNING id").bind(businessId,samuel.id,samuel.name,Number(paidOrder.commission_amount || 0),'Liquidación de reparación entregada · demostración','2026-11-24T17:05:00.000Z','Administración','2026-11-24T17:05:00.000Z','Administración','Transferencia').first<any>();
         if (createdSettlement) await db.prepare('INSERT INTO pos_technician_settlement_items (business_id,settlement_id,order_id,order_number,final_total,parts_cost,commission_percent,commission_amount) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (order_id) DO NOTHING').bind(businessId,createdSettlement.id,paidOrder.id,paidOrder.order_number,paidOrder.final_total,paidOrder.parts_cost,paidOrder.commission_percent,paidOrder.commission_amount).run();
       }
+      const servicePayment = await db.prepare("SELECT id FROM pos_service_payments WHERE business_id=? AND order_id=? AND kind='Pago final' LIMIT 1").bind(businessId,paidOrder?.id || 0).first<any>();
+      if (paidOrder && !servicePayment) {
+        const paymentShift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
+        await db.prepare("INSERT INTO pos_service_payments (business_id,order_id,shift_id,kind,payment_method,amount,actor_name,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(businessId,paidOrder.id,paymentShift?.id || null,'Pago final','Transferencia',160000,'Demostración','2026-11-24T16:40:00.000Z').run();
+        if (paymentShift) await db.prepare('UPDATE pos_cash_shifts SET repair_transfer_income=repair_transfer_income+160000 WHERE id=?').bind(paymentShift.id).run();
+      }
     }
     demoStep = 'devolución';
     const returnItems = JSON.stringify([{ id: 105, name: 'Funda antigolpes iPhone 13', qty: 1, price: 32000 }]);
