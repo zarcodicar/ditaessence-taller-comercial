@@ -172,10 +172,37 @@ export default function Home() {
     if (savingBusiness.current) { saveQueued.current = true; return; }
     const timer = window.setTimeout(() => {
       savingBusiness.current = true;
-      fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save-business-state', products, sales: salesHistory, categories, receiptSettings, baseUpdatedAt: serverUpdatedAt.current }) }).then(response => {
-        if (!response.ok) throw new Error('No fue posible guardar los cambios del negocio.');
+      fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save-business-state', products, sales: salesHistory, categories, receiptSettings, baseUpdatedAt: serverUpdatedAt.current }) }).then(async response => {
+        if (!response.ok) {
+          const details = await response.json().catch(() => ({}));
+          throw { message: details.error || 'No fue posible guardar los cambios del negocio.', conflict: response.status === 409 };
+        }
         return response.json();
-      }).then(data => { serverUpdatedAt.current = data.updatedAt || serverUpdatedAt.current; lastSavedState.current = snapshot; }).catch(() => setNotice('No se guardó este cambio porque el negocio fue actualizado desde otra sesión. Recarga antes de continuar para proteger la información.')).finally(() => { savingBusiness.current = false; if (saveQueued.current) { saveQueued.current = false; setSaveCycle(value => value + 1); } });
+      }).then(data => { serverUpdatedAt.current = data.updatedAt || serverUpdatedAt.current; lastSavedState.current = snapshot; }).catch(async (error: any) => {
+        if (error?.conflict) {
+          try {
+            const businessCode = new URLSearchParams(window.location.search).get('business')?.trim() || '';
+            const response = await fetch(`/api/auth${businessCode ? `?business=${encodeURIComponent(businessCode)}` : ''}`, { cache: 'no-store' });
+            const latest = await response.json();
+            const state = latest.businessState;
+            const serverProducts = state?.products || [];
+            const serverIds = new Set(serverProducts.map((product: any) => String(product.id)));
+            const allLocalProductsPersisted = products.every(product => serverIds.has(String(product.id)));
+            if (state && allLocalProductsPersisted) {
+              const serverCategories = categoryNames(serverProducts, state.categories || []);
+              const serverSettings = normalizeReceiptSettings(state.receiptSettings);
+              serverUpdatedAt.current = state.updatedAt || serverUpdatedAt.current;
+              lastSavedState.current = businessStateSignature(serverProducts, state.sales || [], serverCategories, serverSettings);
+              setProducts(serverProducts);
+              setSalesHistory(state.sales || []);
+              setCategories(serverCategories);
+              setReceiptSettings(serverSettings);
+              return;
+            }
+          } catch { /* Se muestra la indicación de seguridad a continuación. */ }
+        }
+        setNotice(error?.message || 'No fue posible guardar los cambios del negocio.');
+      }).finally(() => { savingBusiness.current = false; if (saveQueued.current) { saveQueued.current = false; setSaveCycle(value => value + 1); } });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [products, salesHistory, categories, receiptSettings, businessReady, account, online, pendingSales.length, saveCycle]);
