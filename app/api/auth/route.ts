@@ -120,7 +120,7 @@ async function seedDemoData() {
       if (!Number.isInteger(technicianId) || technicianId < 1) throw new Error('No encontramos el identificador del técnico.');
       technicians[technician.name] = { ...row, id: technicianId };
       demoStep = `comisión de ${technician.name}`;
-      await db.prepare('INSERT INTO pos_service_technician_commissions (business_id,technician_id,commission_percent,updated_by_name,updated_at) VALUES (?,?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET commission_percent=EXCLUDED.commission_percent,updated_by_name=EXCLUDED.updated_by_name,updated_at=EXCLUDED.updated_at').bind(businessId,technicianId,technician.commission,'Demostración',now()).run();
+      await db.prepare('INSERT INTO pos_service_technician_commissions (business_id,technician_id,commission_percent,updated_by_name,updated_at) VALUES (?,?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET commission_percent=EXCLUDED.commission_percent,updated_by_name=EXCLUDED.updated_by_name,updated_at=EXCLUDED.updated_at RETURNING technician_id').bind(businessId,technicianId,technician.commission,'Demostración',now()).first<any>();
     }
     const valentina = technicians['Valentina Moreno'];
     const samuel = technicians['Samuel Ortiz'];
