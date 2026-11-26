@@ -109,14 +109,16 @@ async function seedDemoData() {
     ];
     const technicians: Record<string, any> = {};
     for (const technician of demoTechnicians) {
-      let row = await db.prepare('SELECT id,name FROM pos_employees WHERE business_id=? AND name=? LIMIT 1').bind(businessId,technician.name).first<any>();
+      let row = await db.prepare('SELECT * FROM pos_employees WHERE business_id=? AND name=? LIMIT 1').bind(businessId,technician.name).first<any>();
       if (!row) {
-        const created = await db.prepare("INSERT INTO pos_employees (business_id,name,phone,document,position,is_technician,active,created_at,updated_at) VALUES (?,?,?,?,? ,1,1,?,?) RETURNING id,name").bind(businessId,technician.name,technician.phone,technician.document,'Técnico',now(),now()).first<any>();
+        const created = await db.prepare("INSERT INTO pos_employees (business_id,name,phone,document,position,is_technician,active,created_at,updated_at) VALUES (?,?,?,?,? ,1,1,?,?) RETURNING *").bind(businessId,technician.name,technician.phone,technician.document,'Técnico',now(),now()).first<any>();
         row = created;
       }
       if (!row) continue;
-      technicians[technician.name] = row;
-      await db.prepare('INSERT INTO pos_service_technician_commissions (business_id,technician_id,commission_percent,updated_by_name,updated_at) VALUES (?,?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET commission_percent=EXCLUDED.commission_percent,updated_by_name=EXCLUDED.updated_by_name,updated_at=EXCLUDED.updated_at').bind(businessId,row.id,technician.commission,'Demostración',now()).run();
+      const technicianId = Number(row.id ?? row.employee_id ?? row.user_id);
+      if (!Number.isInteger(technicianId) || technicianId < 1) throw new Error('No encontramos el identificador del técnico.');
+      technicians[technician.name] = { ...row, id: technicianId };
+      await db.prepare('INSERT INTO pos_service_technician_commissions (business_id,technician_id,commission_percent,updated_by_name,updated_at) VALUES (?,?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET commission_percent=EXCLUDED.commission_percent,updated_by_name=EXCLUDED.updated_by_name,updated_at=EXCLUDED.updated_at').bind(businessId,technicianId,technician.commission,'Demostración',now()).run();
     }
     const valentina = technicians['Valentina Moreno'];
     const samuel = technicians['Samuel Ortiz'];
