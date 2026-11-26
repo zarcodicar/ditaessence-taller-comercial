@@ -109,6 +109,7 @@ async function seedDemoData() {
     ];
     const technicians: Record<string, any> = {};
     for (const technician of demoTechnicians) {
+      demoStep = `técnico ${technician.name}`;
       let row = await db.prepare('SELECT * FROM pos_employees WHERE business_id=? AND name=? LIMIT 1').bind(businessId,technician.name).first<any>();
       if (!row) {
         const created = await db.prepare("INSERT INTO pos_employees (business_id,name,phone,document,position,is_technician,active,created_at,updated_at) VALUES (?,?,?,?,? ,1,1,?,?) RETURNING *").bind(businessId,technician.name,technician.phone,technician.document,'Técnico',now(),now()).first<any>();
@@ -118,16 +119,21 @@ async function seedDemoData() {
       const technicianId = Number(row.id ?? row.employee_id ?? row.user_id);
       if (!Number.isInteger(technicianId) || technicianId < 1) throw new Error('No encontramos el identificador del técnico.');
       technicians[technician.name] = { ...row, id: technicianId };
+      demoStep = `comisión de ${technician.name}`;
       await db.prepare('INSERT INTO pos_service_technician_commissions (business_id,technician_id,commission_percent,updated_by_name,updated_at) VALUES (?,?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET commission_percent=EXCLUDED.commission_percent,updated_by_name=EXCLUDED.updated_by_name,updated_at=EXCLUDED.updated_at').bind(businessId,technicianId,technician.commission,'Demostración',now()).run();
     }
     const valentina = technicians['Valentina Moreno'];
     const samuel = technicians['Samuel Ortiz'];
     if (valentina) {
+      demoStep = 'comisión pendiente';
       await db.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_percent=35,commission_base=125000,commission_amount=43750,commission_status='pending',commission_settled_at=COALESCE(commission_settled_at,?),repair_completed_at=COALESCE(repair_completed_at,?),updated_at=? WHERE business_id=? AND order_number='OS-001'").bind(valentina.id,valentina.name,'2026-11-25T15:40:00.000Z','2026-11-25T15:40:00.000Z',now(),businessId).run();
     }
     if (samuel) {
+      demoStep = 'comisión pagada';
       await db.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_percent=30,commission_base=125000,commission_amount=37500,commission_status='paid',commission_settled_at=COALESCE(commission_settled_at,?),commission_paid_at=COALESCE(commission_paid_at,?),commission_paid_by_name=COALESCE(NULLIF(commission_paid_by_name,''),'Administración'),repair_completed_at=COALESCE(repair_completed_at,?),delivered_at=COALESCE(delivered_at,?),updated_at=? WHERE business_id=? AND order_number='OS-004'").bind(samuel.id,samuel.name,'2026-11-24T16:20:00.000Z','2026-11-24T17:05:00.000Z','2026-11-24T15:30:00.000Z','2026-11-24T16:40:00.000Z',now(),businessId).run();
+      demoStep = 'orden liquidada';
       const paidOrder = await db.prepare("SELECT id,order_number,final_total,parts_cost,commission_percent,commission_amount FROM pos_service_orders WHERE business_id=? AND order_number='OS-004'").bind(businessId).first<any>();
+      demoStep = 'liquidación registrada';
       const settlement = await db.prepare('SELECT id FROM pos_technician_settlements WHERE business_id=? AND technician_id=? LIMIT 1').bind(businessId,samuel.id).first<any>();
       if (paidOrder && !settlement) {
         const createdSettlement = await db.prepare("INSERT INTO pos_technician_settlements (business_id,technician_id,technician_name,total,note,created_at,created_by,paid_at,paid_by,payment_method,shift_id) VALUES (?,?,?,?,?,?,?,?,?,?,NULL) RETURNING id").bind(businessId,samuel.id,samuel.name,Number(paidOrder.commission_amount || 0),'Liquidación de reparación entregada · demostración','2026-11-24T17:05:00.000Z','Administración','2026-11-24T17:05:00.000Z','Administración','Transferencia').first<any>();
