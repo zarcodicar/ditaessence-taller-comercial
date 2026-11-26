@@ -184,7 +184,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   if(url.searchParams.get('resource')==='service-photos'){
     if(!user||!canUseServices(user))return json({error:'Sin permiso.'},403);
-    const rows=await env.DB.prepare('SELECT image FROM pos_service_photos WHERE order_id=? ORDER BY id').bind(Number(url.searchParams.get('orderId'))).all<any>();
+    const rows=await env.DB.prepare('SELECT image FROM pos_service_photos WHERE business_id=? AND order_id=? ORDER BY id').bind(user.businessId,Number(url.searchParams.get('orderId'))).all<any>();
     return json({photos:rows.results.map(p=>p.image)});
   }
   if (url.searchParams.get('resource') === 'service-settings') {
@@ -250,11 +250,12 @@ export async function GET(request: Request) {
       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',sp.id,'amount',sp.amount,'payment_method',sp.payment_method,'supplier',sp.supplier,'note',sp.note,'actor_name',sp.actor_name,'created_at',sp.created_at) ORDER BY sp.id) FROM pos_service_parts sp WHERE sp.order_id=o.id), '[]'::jsonb) AS parts,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e.id,'event_type',e.event_type,'from_status',e.from_status,'to_status',e.to_status,'note',e.note,'actor_name',e.actor_name,'created_at',e.created_at) ORDER BY e.created_at DESC) FROM pos_service_order_events e WHERE e.order_id=o.id), '[]'::jsonb) AS events
       FROM pos_service_orders o
-      WHERE (? = '' OR lower(o.order_number || ' ' || o.customer_name || ' ' || o.customer_phone || ' ' || o.device_brand || ' ' || o.device_model || ' ' || o.device_identifier) LIKE '%' || ? || '%')
+      WHERE o.business_id=?
+        AND (? = '' OR lower(o.order_number || ' ' || o.customer_name || ' ' || o.customer_phone || ' ' || o.device_brand || ' ' || o.device_model || ' ' || o.device_identifier) LIKE '%' || ? || '%')
         AND (? = '' OR o.status = ?)
         AND (? = '' OR substr(o.created_at,1,10) >= ?)
         AND (? = '' OR substr(o.created_at,1,10) <= ?)
-      ORDER BY o.id DESC LIMIT 500`).bind(search, search, status, status, from, from, to, to).all<any>();
+      ORDER BY o.id DESC LIMIT 500`).bind(user.businessId, search, search, status, status, from, from, to, to).all<any>();
     return json({ orders: result.results || [] });
   }
   if (url.searchParams.get('resource') === 'returns-dashboard') {
@@ -264,11 +265,11 @@ export async function GET(request: Request) {
         COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.order_id=o.id),0) AS paid_total,
         COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.source_type='service_order' AND r.source_id=o.id::text),0) AS returned_total
         FROM pos_service_orders o
-        WHERE o.status <> 'Entregado'
+        WHERE o.business_id=? AND o.status <> 'Entregado'
           AND COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.order_id=o.id),0) > COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.source_type='service_order' AND r.source_id=o.id::text),0)
-        ORDER BY o.id DESC LIMIT 300`).all<any>(),
+        ORDER BY o.id DESC LIMIT 300`).bind(user.businessId).all<any>(),
       env.DB.prepare('SELECT products,sales,categories,receipt_settings,updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>(),
-      env.DB.prepare('SELECT * FROM pos_returns ORDER BY created_at DESC LIMIT 300').all<any>(),
+      env.DB.prepare('SELECT * FROM pos_returns WHERE business_id=? ORDER BY created_at DESC LIMIT 300').bind(user.businessId).all<any>(),
     ]);
     const safeParse = (value: string, fallback: any) => { try { return JSON.parse(value || ''); } catch { return fallback; } };
     return json({
@@ -484,28 +485,28 @@ export async function POST(request: Request) {
     const promised = String(data.estimatedDeliveryAt || '');
     if (promised && !Number.isFinite(Date.parse(promised))) return json({error:'Fecha de entrega no válida.'},400);
     const createdAt = now(), clientRef = String(data.clientId || '').trim() || null;
-    if (clientRef) { const previous = await env.DB.prepare('SELECT id,order_number FROM pos_service_orders WHERE client_ref=?').bind(clientRef).first<any>(); if (previous) return json({ order: { id: previous.id, order_number: previous.order_number }, alreadyCreated: true, cashShift: await activeCashShift(actor) }); }
+    if (clientRef) { const previous = await env.DB.prepare('SELECT id,order_number FROM pos_service_orders WHERE business_id=? AND client_ref=?').bind(actor.businessId, clientRef).first<any>(); if (previous) return json({ order: { id: previous.id, order_number: previous.order_number }, alreadyCreated: true, cashShift: await activeCashShift(actor) }); }
     const result = await env.DB.transaction(async db => {
       await db.prepare("SELECT pg_advisory_xact_lock(781234)").first();
       if (clientRef) {
-        const previous = await db.prepare('SELECT id,order_number FROM pos_service_orders WHERE client_ref=?').bind(clientRef).first<any>();
+        const previous = await db.prepare('SELECT id,order_number FROM pos_service_orders WHERE business_id=? AND client_ref=?').bind(actor.businessId, clientRef).first<any>();
         if (previous) return {id:previous.id,orderNumber:previous.order_number};
       }
       const cashShift = initialPayment > 0 ? await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1 FOR UPDATE").bind(actor.businessId).first<any>() : null;
       if (initialPayment > 0 && !cashShift) throw new Error('Abre caja antes de registrar un abono.');
-      const next = await db.prepare('SELECT COALESCE(MAX(id),0)+1 AS number FROM pos_service_orders').first<any>();
+      const next = await db.prepare('SELECT COALESCE(MAX(id),0)+1 AS number FROM pos_service_orders WHERE business_id=?').bind(actor.businessId).first<any>();
       const orderNumber = String(Number(next?.number || 1)).padStart(3, '0');
       const deviceType = ['Celular','Computador portátil','Computador de escritorio','Tablet','Consola','Otro'].includes(String(data.deviceType)) ? String(data.deviceType) : 'Celular';
-      const insert = await db.prepare(`INSERT INTO pos_service_orders (order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,device_password,accessories,physical_condition,reported_issue,planned_service,notes,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at,client_ref,technician_user_id,technician_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Recibido',?,?,?,?,?,?,?, ?,NULL,'')`).bind(orderNumber,String(data.customerName).trim(),String(data.customerPhone).trim(),String(data.customerDocument||'').trim(),deviceType,String(data.deviceBrand).trim(),String(data.deviceModel).trim(),String(data.deviceIdentifier||'').trim(),String(data.devicePassword||'').trim(),String(data.accessories||'').trim(),String(data.physicalCondition||'').trim(),String(data.reportedIssue||'').trim(),String(data.plannedService||'').trim(),String(data.notes||'').trim(),Math.max(0,Math.round(Number(data.estimatedTotal)||0)),Math.max(0,Math.round(Number(data.partsCost)||0)),Math.max(0,Math.round(Number(data.finalTotal)||0)),actor.id,actor.name,createdAt,createdAt,clientRef).run();
+      const insert = await db.prepare(`INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,device_password,accessories,physical_condition,reported_issue,planned_service,notes,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at,client_ref,technician_user_id,technician_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Recibido',?,?,?,?,?,?,?, ?,NULL,'')`).bind(actor.businessId,orderNumber,String(data.customerName).trim(),String(data.customerPhone).trim(),String(data.customerDocument||'').trim(),deviceType,String(data.deviceBrand).trim(),String(data.deviceModel).trim(),String(data.deviceIdentifier||'').trim(),String(data.devicePassword||'').trim(),String(data.accessories||'').trim(),String(data.physicalCondition||'').trim(),String(data.reportedIssue||'').trim(),String(data.plannedService||'').trim(),String(data.notes||'').trim(),Math.max(0,Math.round(Number(data.estimatedTotal)||0)),Math.max(0,Math.round(Number(data.partsCost)||0)),Math.max(0,Math.round(Number(data.finalTotal)||0)),actor.id,actor.name,createdAt,createdAt,clientRef).run();
       const id = Number(insert.meta.last_row_id);
-      for(const photo of photos)await db.prepare('INSERT INTO pos_service_photos (order_id,image) VALUES (?,?)').bind(id,photo).run();
-      await db.prepare('UPDATE pos_service_orders SET estimated_delivery_at=? WHERE id=?').bind(promised||null,id).run();
+      for(const photo of photos)await db.prepare('INSERT INTO pos_service_photos (business_id,order_id,image) VALUES (?,?,?)').bind(actor.businessId,id,photo).run();
+      await db.prepare('UPDATE pos_service_orders SET estimated_delivery_at=? WHERE id=? AND business_id=?').bind(promised||null,id,actor.businessId).run();
       if (initialPayment > 0) {
         const column = initialMethod==='Efectivo'?'repair_cash_income':initialMethod==='Tarjeta'?'repair_card_income':'repair_transfer_income';
-        await db.prepare('INSERT INTO pos_service_payments (order_id,shift_id,kind,payment_method,amount,actor_name,created_at) VALUES (?,?,?,?,?,?,?)').bind(id,cashShift.id,'Anticipo',initialMethod,initialPayment,actor.name,createdAt).run();
+        await db.prepare('INSERT INTO pos_service_payments (business_id,order_id,shift_id,kind,payment_method,amount,actor_name,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(actor.businessId,id,cashShift.id,'Anticipo',initialMethod,initialPayment,actor.name,createdAt).run();
         await db.prepare(`UPDATE pos_cash_shifts SET ${column}=${column}+? WHERE id=?`).bind(initialPayment,cashShift.id).run();
       }
-      await db.prepare("INSERT INTO pos_service_order_events (order_id,event_type,to_status,note,actor_name,created_at) VALUES (?,'Creación','Recibido',?,?,?)").bind(id,'Equipo recibido y orden creada.',actor.name,createdAt).run();
+      await db.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,to_status,note,actor_name,created_at) VALUES (? ,?,'Creación','Recibido',?,?,?)").bind(actor.businessId,id,'Equipo recibido y orden creada.',actor.name,createdAt).run();
       return { id, orderNumber };
     });
     return json({ order: { id: result.id, order_number: result.orderNumber }, cashShift: await activeCashShift(actor) }, 201);
