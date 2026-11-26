@@ -91,6 +91,10 @@ async function initializeTables() {
   // cada negocio conserva su propia caja, sin bloquear a los demás.
   await env.DB.prepare('DROP INDEX IF EXISTS idx_pos_cash_shifts_single_open').run();
   await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_cash_shifts_single_open ON pos_cash_shifts(business_id) WHERE status='open'").run();
+  // La misma venta puede existir en dos negocios distintos: el identificador
+  // del dispositivo se vuelve único dentro de cada negocio, no globalmente.
+  try { await env.DB.prepare('ALTER TABLE pos_synced_sales DROP CONSTRAINT IF EXISTS pos_synced_sales_pkey').run(); } catch { /* Instalación anterior compatible. */ }
+  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_synced_sales_business_client ON pos_synced_sales(business_id,client_id)').run();
   // Solo cambia el nombre heredado de la demostración comercial. Los negocios
   // reales que tengan un nombre propio no se modifican.
   try {
@@ -263,7 +267,7 @@ export async function GET(request: Request) {
         WHERE o.status <> 'Entregado'
           AND COALESCE((SELECT SUM(amount) FROM pos_service_payments p WHERE p.order_id=o.id),0) > COALESCE((SELECT SUM(amount) FROM pos_returns r WHERE r.source_type='service_order' AND r.source_id=o.id::text),0)
         ORDER BY o.id DESC LIMIT 300`).all<any>(),
-      env.DB.prepare('SELECT products,sales,categories,receipt_settings,updated_at FROM pos_business_state WHERE id=1').first<any>(),
+      env.DB.prepare('SELECT products,sales,categories,receipt_settings,updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>(),
       env.DB.prepare('SELECT * FROM pos_returns ORDER BY created_at DESC LIMIT 300').all<any>(),
     ]);
     const safeParse = (value: string, fallback: any) => { try { return JSON.parse(value || ''); } catch { return fallback; } };
@@ -327,7 +331,7 @@ export async function GET(request: Request) {
   }
   const workers = user?.role === 'owner' ? await env.DB.prepare("SELECT id, name, username, role, permissions FROM pos_users WHERE role='worker' ORDER BY name").all<any>() : null;
   const notifications = user?.role === 'owner' ? await env.DB.prepare('SELECT * FROM pos_notifications ORDER BY id DESC LIMIT 200').all<any>() : null;
-  const state = user ? await env.DB.prepare('SELECT products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state WHERE id=1').first<any>() : null;
+  const state = user ? await env.DB.prepare('SELECT products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>() : null;
   return json({ initialized: Number(count?.count || 0) > 0, setupProtected: Boolean(SETUP_TOKEN), user, workers: workers?.results.map(worker => ({ ...worker, permissions: JSON.parse(worker.permissions || '[]') })) || [], notifications: notifications?.results || [], cashShift: await activeCashShift(user), businessState: state ? { products: JSON.parse(state.products || '[]'), sales: JSON.parse(state.sales || '[]'), categories: Number(state.category_catalog_version || 0) >= 1 ? JSON.parse(state.categories || '[]') : [], receiptSettings: receiptSettings(JSON.parse(state.receipt_settings || '{}')), updatedAt: state.updated_at } : null });
 }
 export async function POST(request: Request) {
@@ -389,9 +393,9 @@ export async function POST(request: Request) {
     const incoming = Array.isArray(data.sales) ? data.sales.slice(0, 200) : [];
     if (!incoming.length) return json({ error: 'No hay ventas pendientes para sincronizar.' }, 400);
     const result = await env.DB.transaction(async db => {
-      await db.prepare('INSERT INTO pos_business_state (id, products, sales, categories, receipt_settings, category_catalog_version, updated_at) VALUES (1, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO NOTHING').bind('[]', '[]', '[]', JSON.stringify(DEFAULT_RECEIPT_SETTINGS), now()).run();
-      await db.prepare('SELECT id FROM pos_business_state WHERE id=1 FOR UPDATE').first();
-      const state = await db.prepare('SELECT products, sales, categories, receipt_settings FROM pos_business_state WHERE id=1').first<any>();
+      await db.prepare('INSERT INTO pos_business_state (id, business_id, products, sales, categories, receipt_settings, category_catalog_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO NOTHING').bind(actor.businessId, actor.businessId, '[]', '[]', '[]', JSON.stringify(DEFAULT_RECEIPT_SETTINGS), now()).run();
+      await db.prepare('SELECT id FROM pos_business_state WHERE business_id=? FOR UPDATE').bind(actor.businessId).first();
+      const state = await db.prepare('SELECT products, sales, categories, receipt_settings FROM pos_business_state WHERE business_id=?').bind(actor.businessId).first<any>();
       let products = JSON.parse(state?.products || '[]');
       const savedSales = JSON.parse(state?.sales || '[]');
       const categories = JSON.parse(state?.categories || '[]');
@@ -404,7 +408,7 @@ export async function POST(request: Request) {
         const shiftId = Number(entry?.shiftId);
         const source = entry?.sale || {};
         if (!clientId || clientId.length > 120 || !Number.isInteger(shiftId) || shiftId < 1) return { error: 'Una venta pendiente no contiene una identificación válida.', status: 400 };
-        const previous = await db.prepare('SELECT sale_number FROM pos_synced_sales WHERE client_id=?').bind(clientId).first<{ sale_number: string }>();
+        const previous = await db.prepare('SELECT sale_number FROM pos_synced_sales WHERE business_id=? AND client_id=?').bind(actor.businessId, clientId).first<{ sale_number: string }>();
         if (previous) { synced.push({ clientId, number: previous.sale_number }); continue; }
         const shift = await db.prepare('SELECT id, status FROM pos_cash_shifts WHERE id=? AND business_id=?').bind(shiftId, actor.businessId).first<any>();
         if (!shift) return { error: 'No encontramos el turno de caja asociado con una venta pendiente.', status: 409 };
@@ -434,7 +438,7 @@ export async function POST(request: Request) {
         const units = items.reduce((sum: number, item: any) => sum + item.qty, 0);
         const cashAmount = Number(paymentBreakdown.Efectivo || 0), cardAmount = Number(paymentBreakdown.Tarjeta || 0), transferAmount = Number(paymentBreakdown.Transferencia || 0);
         await db.prepare("UPDATE pos_cash_shifts SET cash_sales=cash_sales+?, card_sales=card_sales+?, transfer_sales=transfer_sales+?, sales_count=sales_count+1, units_sold=units_sold+?, expected_amount=CASE WHEN status='closed' THEN COALESCE(expected_amount, 0)+? ELSE expected_amount END, difference=CASE WHEN status='closed' THEN COALESCE(difference, 0)-? ELSE difference END WHERE id=?").bind(cashAmount, cardAmount, transferAmount, units, cashAmount, cashAmount, shiftId).run();
-        await db.prepare('INSERT INTO pos_synced_sales (client_id, sale_number, payload, synced_at) VALUES (?, ?, ?, ?) RETURNING client_id').bind(clientId, saleNumber, JSON.stringify(sale), now()).run();
+        await db.prepare('INSERT INTO pos_synced_sales (business_id, client_id, sale_number, payload, synced_at) VALUES (?, ?, ?, ?, ?) RETURNING client_id').bind(actor.businessId, clientId, saleNumber, JSON.stringify(sale), now()).run();
         const adjustedItems = items.filter((item: any) => item.price < item.originalPrice);
         if (adjustedItems.length) {
           const gifts = adjustedItems.filter((item: any) => item.isGift);
@@ -455,7 +459,7 @@ export async function POST(request: Request) {
       }
 
       const updatedAt = now();
-      await db.prepare('UPDATE pos_business_state SET products=?, sales=?, categories=?, category_catalog_version=1, updated_at=? WHERE id=1').bind(JSON.stringify(products), JSON.stringify(savedSales), JSON.stringify(categories), updatedAt).run();
+      await db.prepare('UPDATE pos_business_state SET products=?, sales=?, categories=?, category_catalog_version=1, updated_at=? WHERE business_id=?').bind(JSON.stringify(products), JSON.stringify(savedSales), JSON.stringify(categories), updatedAt, actor.businessId).run();
       if (applied > 0 && incoming.some((entry: any) => entry?.offline)) await db.prepare('INSERT INTO pos_notifications (type, severity, message, actor_name, entity_type, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('Sincronización sin conexión', 'info', `${applied} venta${applied === 1 ? '' : 's'} pendiente${applied === 1 ? '' : 's'} se sincronizaron correctamente.`, actor.name, 'ventas', JSON.stringify({ ventas_sincronizadas: applied }), now()).run();
       return { products, sales: savedSales, categories, receiptSettings: receiptSettings(JSON.parse(state?.receipt_settings || '{}')), synced, updatedAt };
     });
@@ -693,7 +697,7 @@ export async function POST(request: Request) {
     const products = Array.isArray(data.products) ? data.products : [];
     const sales = Array.isArray(data.sales) ? data.sales : [];
     const categories = Array.isArray(data.categories) ? data.categories.map((item: unknown) => String(item).trim()).filter(Boolean) : [];
-    const savedState = await env.DB.prepare('SELECT products, receipt_settings FROM pos_business_state WHERE id=1').first<{ products: string; receipt_settings: string }>();
+    const savedState = await env.DB.prepare('SELECT products, receipt_settings FROM pos_business_state WHERE business_id=?').bind(actor.businessId).first<{ products: string; receipt_settings: string }>();
     const savedProducts = savedState ? JSON.parse(savedState.products || '[]') : [];
     const duplicateCode = newlyIntroducedDuplicate(savedProducts, products);
     if (duplicateCode) return json({ error: `El código “${duplicateCode}” ya está asignado a otro producto. Usa un código diferente.` }, 409);
@@ -704,7 +708,7 @@ export async function POST(request: Request) {
       if (savedProducts.some((item: any) => !incomingIds.has(String(item?.id)))) return json({ error: 'Los trabajadores no pueden borrar productos del inventario.' }, 403);
     }
     const updatedAt = now();
-    await env.DB.prepare("INSERT INTO pos_business_state (id, products, sales, categories, receipt_settings, category_catalog_version, updated_at) VALUES (1, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO UPDATE SET products=EXCLUDED.products, sales=EXCLUDED.sales, categories=EXCLUDED.categories, receipt_settings=EXCLUDED.receipt_settings, category_catalog_version=1, updated_at=EXCLUDED.updated_at").bind(JSON.stringify(products), JSON.stringify(sales), JSON.stringify(categories), JSON.stringify(savedReceiptSettings), updatedAt).run();
+    await env.DB.prepare("INSERT INTO pos_business_state (id, business_id, products, sales, categories, receipt_settings, category_catalog_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO UPDATE SET products=EXCLUDED.products, sales=EXCLUDED.sales, categories=EXCLUDED.categories, receipt_settings=EXCLUDED.receipt_settings, category_catalog_version=1, updated_at=EXCLUDED.updated_at").bind(actor.businessId, actor.businessId, JSON.stringify(products), JSON.stringify(sales), JSON.stringify(categories), JSON.stringify(savedReceiptSettings), updatedAt).run();
     return json({ ok: true, updatedAt });
   }
   if (data.action === 'restore-backup') {
