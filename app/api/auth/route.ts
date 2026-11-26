@@ -86,7 +86,8 @@ async function seedDemoData() {
       ];
       for (const item of examples) {
         const createdAt = now();
-        const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,...item,1,'Demostración',createdAt,createdAt).run();
+        const [orderNumber, customerName, customerPhone, customerDocument, deviceType, deviceBrand, deviceModel, deviceIdentifier, physicalCondition, reportedIssue, plannedService, status, estimatedTotal, partsCost, finalTotal] = item;
+        const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,orderNumber,customerName,customerPhone,customerDocument,deviceType,deviceBrand,deviceModel,deviceIdentifier,physicalCondition,reportedIssue,plannedService,status,estimatedTotal,partsCost,finalTotal,1,'Demostración',createdAt,createdAt).run();
         await db.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,to_status,note,actor_name,created_at) VALUES (? ,?,'Creación',?,'Equipo recibido y orden creada para demostración.','Demostración',?)").bind(businessId,created.meta.last_row_id,item[11],createdAt).run();
       }
     }
