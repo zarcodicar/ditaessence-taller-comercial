@@ -55,11 +55,11 @@ async function validPassword(password: string, saved: string) {
 let schemaReady:Promise<void>|null=null;
 async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>{schemaReady=null;throw e});await schemaReady;}
 const demoProducts = [
-  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: 'https://i5.walmartimages.com/asr/7c30a1e2-f4fa-4e7f-8c11-c63c3ab2ed87.0bb3eccd0ccd340928bb9078b4fd91b0.jpeg' },
+  { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: '/demo-products/cable-usbc-reforzado.png' },
   { id: 102, name: 'Cargador USB-C reforzado 25 W', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores', image: 'https://storage.googleapis.com/bpv/charger-usb-cable-type-c-white-isolated-background.exact1600w.jpg' },
   { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: '/demo-products/vidrio-templado-a54.png' },
   { id: 104, name: 'Audífonos inalámbricos Bluetooth', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio', image: '/demo-products/audifonos-bluetooth.png' },
-  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: 'https://codiworldwide.com/cdn/shop/files/product_i13_6.1_bumper_black_01.png?v=1737131669' },
+  { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: '/demo-products/funda-antigolpes-iphone-13.png' },
   { id: 106, name: 'Mouse inalámbrico compacto', sku: 'MOU-WL-01', barcode: '7709001001066', price: 39000, cost: 21000, stock: 10, min: 3, category: 'Computadores', image: '/demo-products/mouse-inalambrico.png' },
 ];
 const demoSales = [
