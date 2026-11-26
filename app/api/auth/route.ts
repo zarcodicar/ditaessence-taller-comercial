@@ -884,7 +884,11 @@ export async function POST(request: Request) {
     const products = Array.isArray(data.products) ? data.products : [];
     const sales = Array.isArray(data.sales) ? data.sales : [];
     const categories = Array.isArray(data.categories) ? data.categories.map((item: unknown) => String(item).trim()).filter(Boolean) : [];
-    const savedState = await env.DB.prepare('SELECT products, receipt_settings FROM pos_business_state WHERE business_id=?').bind(actor.businessId).first<{ products: string; receipt_settings: string }>();
+    const savedState = await env.DB.prepare('SELECT products, sales, categories, receipt_settings, updated_at FROM pos_business_state WHERE business_id=?').bind(actor.businessId).first<{ products: string; sales: string; categories: string; receipt_settings: string; updated_at: string }>();
+    const baseUpdatedAt = String(data.baseUpdatedAt || '');
+    if (baseUpdatedAt && savedState?.updated_at && savedState.updated_at !== baseUpdatedAt) {
+      return json({ error: 'El negocio fue actualizado desde otra sesión. Recarga antes de continuar para proteger la información.' }, 409);
+    }
     const savedProducts = savedState ? JSON.parse(savedState.products || '[]') : [];
     const duplicateCode = newlyIntroducedDuplicate(savedProducts, products);
     if (duplicateCode) return json({ error: `El código “${duplicateCode}” ya está asignado a otro producto. Usa un código diferente.` }, 409);

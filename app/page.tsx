@@ -83,7 +83,8 @@ export default function Home() {
   const [pendingSales, setPendingSales] = useState<OfflineSale[]>(() => localValue(scopedStorageKey(OFFLINE_SALES), []));
   const syncingSales = useRef(false);
   const savingBusiness = useRef(false);
-  const skipBusinessSave = useRef(true);
+  const saveQueued = useRef(false);
+  const [saveCycle, setSaveCycle] = useState(0);
   const serverUpdatedAt = useRef('');
   const [repairForm, setRepairForm] = useState({ customer: '', phone: '', device: '', problem: '', deposit: '' });
   const nav = [{ label: 'Punto de venta', icon: <ShoppingBag /> }, { label: 'Caja y movimientos', icon: <ReceiptText /> }, { label: 'Ventas', icon: <ReceiptText /> }, { label: 'Inventario', icon: <Box /> }, { label: 'Órdenes de servicio', icon: <Wrench /> }, { label: 'Devoluciones y ajustes', icon: <Undo2 /> }, ...(activeRole === 'owner' ? [{ label: 'Pago de técnicos', icon: <Wrench /> }] : []), { label: 'Reportes', icon: <BarChart3 /> }, ...(activeRole === 'owner' ? [{ label: 'Notificaciones', icon: <Bell /> }] : [])];
@@ -162,16 +163,16 @@ export default function Home() {
   }, [account, businessReady, cashShift, categories, notifications, products, receiptSettings, salesHistory, workers]);
   useEffect(() => {
     if (!businessReady || !account || !online || pendingSales.length || syncingSales.current) return;
-    if (skipBusinessSave.current) { skipBusinessSave.current = false; return; }
+    if (savingBusiness.current) { saveQueued.current = true; return; }
     const timer = window.setTimeout(() => {
       savingBusiness.current = true;
-      fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save-business-state', products, sales: salesHistory, categories, receiptSettings }) }).then(response => {
+      fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save-business-state', products, sales: salesHistory, categories, receiptSettings, baseUpdatedAt: serverUpdatedAt.current }) }).then(response => {
         if (!response.ok) throw new Error('No fue posible guardar los cambios del negocio.');
         return response.json();
-      }).then(data => { serverUpdatedAt.current = data.updatedAt || serverUpdatedAt.current; }).catch(() => setNotice('No fue posible guardar los cambios del negocio. Se intentará nuevamente.')).finally(() => { savingBusiness.current = false; });
-    }, 250);
+      }).then(data => { serverUpdatedAt.current = data.updatedAt || serverUpdatedAt.current; }).catch(() => setNotice('No se guardó este cambio porque el negocio fue actualizado desde otra sesión. Recarga antes de continuar para proteger la información.')).finally(() => { savingBusiness.current = false; if (saveQueued.current) { saveQueued.current = false; setSaveCycle(value => value + 1); } });
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [products, salesHistory, categories, receiptSettings, businessReady, account, online, pendingSales.length]);
+  }, [products, salesHistory, categories, receiptSettings, businessReady, account, online, pendingSales.length, saveCycle]);
   useEffect(() => {
     if (!businessReady || !account || !online || !pendingSales.length) return;
     const sync = async () => {
@@ -190,7 +191,6 @@ export default function Home() {
         const remaining = latestQueue.filter(entry => !completed.has(entry.clientId));
         saveLocal(scopedStorageKey(OFFLINE_SALES), remaining);
         setPendingSales(remaining);
-        skipBusinessSave.current = true;
         serverUpdatedAt.current = data.businessState?.updatedAt || serverUpdatedAt.current;
         setProducts(data.businessState?.products || []);
         setSalesHistory(data.businessState?.sales || []);
@@ -233,7 +233,6 @@ export default function Home() {
         }
         const remoteUpdate = data.businessState?.updatedAt || '';
         if (!remoteUpdate || remoteUpdate === serverUpdatedAt.current) return;
-        skipBusinessSave.current = true;
         serverUpdatedAt.current = remoteUpdate;
         const loadedProducts = data.businessState.products || [];
         setProducts(loadedProducts);
@@ -283,7 +282,6 @@ export default function Home() {
           throw new Error(data.error || 'Servidor temporalmente no disponible.');
         }
         setProducts(data.businessState?.products || []);
-        skipBusinessSave.current = true;
         serverUpdatedAt.current = data.businessState?.updatedAt || serverUpdatedAt.current;
         setSalesHistory(data.businessState?.sales || []);
         setCategories(categoryNames(data.businessState?.products || [], data.businessState?.categories || []));
@@ -318,7 +316,7 @@ export default function Home() {
   const changeRepair = (id: string) => setRepairs((old) => old.map((r) => r.id === id ? { ...r, status: r.status === 'Recibido' ? 'Diagnóstico' : r.status === 'Diagnóstico' ? 'En reparación' : r.status === 'En reparación' ? 'Listo' : 'Listo' } : r));
 
   if (!authReady) return isDemo ? <main className="auth-shell demo-boot" aria-label="Abriendo demostración" /> : <main className="auth-shell"><div className="auth-card"><img className="auth-brand" src="/dtc-stage.svg" alt="DTC Stage" /><b>DTC Stage</b><p>Preparando acceso seguro…</p></div></main>;
-  if (!account) return <Login initialError={accessError} onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; skipBusinessSave.current = true; serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; setAccessError(''); setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(sessionData?.businessState?.sales || []); setCategories(categoryNames(loadedProducts, sessionData?.businessState?.categories || [])); setReceiptSettings(normalizeReceiptSettings(sessionData?.businessState?.receiptSettings)); setBusinessReady(true); }} />;
+  if (!account) return <Login initialError={accessError} onLogin={(user, activeShift, sessionData) => { const loadedProducts = sessionData?.businessState?.products || []; serverUpdatedAt.current = sessionData?.businessState?.updatedAt || ''; setAccessError(''); setAccount(user); setActiveRole(user.role === 'worker' ? 'worker' : 'owner'); setCashShift(activeShift || null); setWorkers(sessionData?.workers || []); setNotifications(sessionData?.notifications || []); setProducts(loadedProducts); setSalesHistory(sessionData?.businessState?.sales || []); setCategories(categoryNames(loadedProducts, sessionData?.businessState?.categories || [])); setReceiptSettings(normalizeReceiptSettings(sessionData?.businessState?.receiptSettings)); setBusinessReady(true); }} />;
   const logout = async () => { try { await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }); } catch { /* También permite salir sin conexión. */ } window.localStorage.removeItem(scopedStorageKey(OFFLINE_SNAPSHOT)); window.localStorage.removeItem(scopedStorageKey(OFFLINE_SALES)); setBusinessReady(false); setAccount(null); setProducts([]); setCategories([]); setReceiptSettings(DEFAULT_RECEIPT_SETTINGS); setSalesHistory([]); setCart({}); setCartPrices({}); };
   return <main className="app-shell min-h-screen bg-[#f5f7fa] text-slate-950">
     <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-800 bg-[#101827] p-5 text-slate-300 lg:flex lg:flex-col">
@@ -339,7 +337,7 @@ export default function Home() {
         {section === 'Ventas' && <SalesHistory receiptSettings={receiptSettings} canDelete={online} isWorker={activeRole === 'worker'} onNotify={async (alert: any) => { const created = { id: Date.now(), type: alert.type, severity: alert.severity || 'info', message: alert.text, actor_name: account.name, entity_type: alert.entityType, entity_id: alert.entityId, details: alert.details || {}, createdAt: new Date().toISOString() }; const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'notify-owner', ...alert }) }); if (response.ok) setNotifications((old) => [created, ...old]); }} sales={salesHistory} onDelete={async (sale: any) => { if (sale.payment === 'Efectivo' && Number(sale.total) > 0) { const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'void-cash-sale', amount: sale.total }) }); const result = await response.json(); if (!response.ok) return setNotice(result.error || 'No fue posible ajustar la caja.'); setCashShift(result.shift); } setProducts((old) => old.map((product) => { const item = sale.items.find((line: any) => line.id === product.id); return item ? { ...product, stock: product.stock + item.qty } : product; })); if (sale.payment === 'Efectivo' && Number(sale.total) > 0) setCash((old) => Math.max(0, old - sale.total)); setSalesHistory((old) => old.filter((item) => item.number !== sale.number)); setNotice(`Venta ${sale.number} eliminada y existencias restauradas.`); }} />}
         {section === 'Inventario' && <Inventory products={products} categories={categories} onNotice={setNotice} canManage={online && (activeRole === 'owner' || currentWorkerPermissions.includes('Inventario'))} canDelete={online && activeRole === 'owner'} canEditCategories={online && activeRole === 'owner'} canDeleteCategories={online && activeRole === 'owner'} canSeeCosts={activeRole === 'owner' || currentWorkerPermissions.includes('Inventario') || currentWorkerPermissions.includes('Ver costos y márgenes')} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} addCategory={(name: string) => setCategories(old => categoryNames([], [...old, name]))} renameCategory={(oldName: string, newName: string) => { setCategories(old => categoryNames([], old.map(category => category === oldName ? newName : category))); setProducts(old => old.map(product => product.category === oldName ? { ...product, category: newName } : product)); }} removeCategory={(name: string) => { setCategories(old => old.filter(category => category !== name)); setProducts(old => old.map(product => product.category === name ? { ...product, category: 'Sin categoría' } : product)); }} add={(product) => setProducts((old) => [...old, product])} update={(product) => setProducts((old) => old.map((p) => p.id === product.id ? product : p))} remove={(id) => setProducts((old) => old.filter((p) => p.id !== id))} />}
         {section === 'Órdenes de servicio' && <ServiceOrders receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} isOwner={activeRole === 'owner'} />}
-        {section === 'Devoluciones y ajustes' && <ReturnsAdjustments receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} onBusinessState={(state: any) => { if (!state) return; skipBusinessSave.current = true; serverUpdatedAt.current = state.updatedAt || serverUpdatedAt.current; setProducts(state.products || []); setSalesHistory(state.sales || []); setCategories(categoryNames(state.products || [], state.categories || [])); setReceiptSettings(normalizeReceiptSettings(state.receiptSettings)); }} />}
+        {section === 'Devoluciones y ajustes' && <ReturnsAdjustments receiptSettings={receiptSettings} onNotice={setNotice} onCashShift={setCashShift} onBusinessState={(state: any) => { if (!state) return; serverUpdatedAt.current = state.updatedAt || serverUpdatedAt.current; setProducts(state.products || []); setSalesHistory(state.sales || []); setCategories(categoryNames(state.products || [], state.categories || [])); setReceiptSettings(normalizeReceiptSettings(state.receiptSettings)); }} />}
         <div className={section === 'Caja y movimientos' ? '' : 'hidden'}><CashManagement shift={cashShift} canSeeFinancials={activeRole === 'owner' || currentWorkerPermissions.includes('Ver indicadores financieros')} canManageCash={activeRole === 'owner'} canRecordMovements={activeRole === 'owner' || currentWorkerPermissions.includes('Caja y movimientos')} onShiftChange={setCashShift} onNotice={setNotice} /></div>
         {section === 'Reportes' && <ReportsDashboard products={products} sales={salesHistory} />}
         {section === 'Pago de técnicos' && activeRole === 'owner' && <EmployeePayroll onNotice={setNotice} onCashShift={setCashShift} receiptSettings={receiptSettings} />}
