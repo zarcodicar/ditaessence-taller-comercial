@@ -418,11 +418,11 @@ export async function GET(request: Request) {
     const from = String(url.searchParams.get('from') || ''), to = String(url.searchParams.get('to') || '');
     const row = await env.DB.prepare(`SELECT COUNT(DISTINCT o.id) AS orders_count,
       COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN p.amount ELSE 0 END),0) AS income,
-      COALESCE((SELECT SUM(parts_cost) FROM pos_service_orders WHERE (?='' OR substr(created_at,1,10)>=?) AND (?='' OR substr(created_at,1,10)<=?)),0) AS parts_cost,
-      COALESCE((SELECT SUM(GREATEST(final_total-COALESCE((SELECT SUM(amount) FROM pos_service_payments sp WHERE sp.order_id=so.id),0),0)) FROM pos_service_orders so WHERE so.status NOT IN ('Cancelado','Sin reparación') AND (?='' OR substr(so.created_at,1,10)>=?) AND (?='' OR substr(so.created_at,1,10)<=?)),0) AS pending,
-      COALESCE((SELECT SUM(commission_amount) FROM pos_service_orders so WHERE commission_status IN ('pending','paid') AND (?='' OR substr(so.commission_settled_at,1,10)>=?) AND (?='' OR substr(so.commission_settled_at,1,10)<=?)),0) AS technician_commissions
+      COALESCE((SELECT SUM(parts_cost) FROM pos_service_orders so WHERE so.business_id=? AND (?='' OR substr(so.created_at,1,10)>=?) AND (?='' OR substr(so.created_at,1,10)<=?)),0) AS parts_cost,
+      COALESCE((SELECT SUM(GREATEST(final_total-COALESCE((SELECT SUM(amount) FROM pos_service_payments sp WHERE sp.business_id=so.business_id AND sp.order_id=so.id),0),0)) FROM pos_service_orders so WHERE so.business_id=? AND so.status NOT IN ('Cancelado','Sin reparación') AND (?='' OR substr(so.created_at,1,10)>=?) AND (?='' OR substr(so.created_at,1,10)<=?)),0) AS pending,
+      COALESCE((SELECT SUM(commission_amount) FROM pos_service_orders so WHERE so.business_id=? AND commission_status IN ('pending','paid') AND (?='' OR substr(so.commission_settled_at,1,10)>=?) AND (?='' OR substr(so.commission_settled_at,1,10)<=?)),0) AS technician_commissions
       FROM pos_service_orders o LEFT JOIN pos_service_payments p ON p.order_id=o.id
-      WHERE (?='' OR substr(o.created_at,1,10)>=?) AND (?='' OR substr(o.created_at,1,10)<=?)`).bind(from,from,to,to,from,from,to,to,from,from,to,to,from,from,to,to).first<any>();
+      WHERE o.business_id=? AND (?='' OR substr(o.created_at,1,10)>=?) AND (?='' OR substr(o.created_at,1,10)<=?)`).bind(user.businessId,from,from,to,to,user.businessId,from,from,to,to,user.businessId,from,from,to,to,user.businessId,from,from,to,to).first<any>();
     return json({ summary: row || { orders_count: 0, income: 0, parts_cost: 0, pending: 0 } });
   }
   if (url.searchParams.get('resource') === 'backup') {
