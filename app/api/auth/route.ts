@@ -4,6 +4,7 @@ import { DEFAULT_RECEIPT_SETTINGS, receiptSettings } from '../../receipt-setting
 
 const SESSION = 'cellhouse_session';
 const SETUP_TOKEN = process.env.SETUP_TOKEN?.trim() || '';
+const PROVISIONING_KEY = process.env.PROVISIONING_KEY?.trim() || '';
 // Solo se habilita en la instalación aislada que usamos como demostración.
 // Las instalaciones de clientes no definen esta variable y conservan su acceso
 // normal con usuario y contraseña.
@@ -42,6 +43,16 @@ const newlyIntroducedDuplicate = (savedProducts: any[], incomingProducts: any[])
 };
 const bytes = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 const token = (length = 32) => Array.from(bytes(length), byte => byte.toString(16).padStart(2, '0')).join('');
+const provisionAuthorized = (request: Request) => {
+  const supplied = String(request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!PROVISIONING_KEY || supplied.length !== PROVISIONING_KEY.length) return false;
+  const expected = new TextEncoder().encode(PROVISIONING_KEY);
+  const received = new TextEncoder().encode(supplied);
+  if (expected.length !== received.length) return false;
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) difference |= expected[index] ^ received[index];
+  return difference === 0;
+};
 
 async function hashPassword(password: string, salt = token(16)) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -266,7 +277,7 @@ async function initializeTables() {
 function cookie(request: Request) { return request.headers.get('cookie')?.split(';').map(item => item.trim()).find(item => item.startsWith(`${SESSION}=`))?.slice(SESSION.length + 1); }
 async function current(request: Request) {
   const id = cookie(request); if (!id) return null;
-  const row = await env.DB.prepare('SELECT u.id, u.name, u.username, u.role, u.permissions, s.business_id FROM pos_sessions s JOIN pos_users u ON u.id=s.user_id AND u.business_id=s.business_id WHERE s.id=? AND s.expires_at>?').bind(id, now()).first<any>();
+  const row = await env.DB.prepare("SELECT u.id, u.name, u.username, u.role, u.permissions, s.business_id FROM pos_sessions s JOIN pos_users u ON u.id=s.user_id AND u.business_id=s.business_id JOIN pos_businesses b ON b.id=s.business_id AND b.status='active' WHERE s.id=? AND s.expires_at>?").bind(id, now()).first<any>();
   return row ? { ...row, businessId: Number(row.business_id || 1), permissions: JSON.parse(row.permissions || '[]') } : null;
 }
 async function session(userId: number, businessId = 1) {
@@ -456,6 +467,37 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
   await tables(); const data = await request.json<any>();
+  if (data.action === 'provision-business') {
+    if (!provisionAuthorized(request)) return json({ error: 'No autorizado.' }, 401);
+    const businessCode = String(data.businessCode || '').trim().toUpperCase().slice(0, 40);
+    const businessName = String(data.businessName || '').trim().slice(0, 100);
+    const ownerName = String(data.ownerName || '').trim().slice(0, 100);
+    const username = String(data.username || '').trim().toLowerCase().slice(0, 60);
+    const password = String(data.password || '');
+    if (!/^[A-Z0-9-]{6,40}$/.test(businessCode) || !businessName || !ownerName || !username || password.length < 8) return json({ error: 'Datos de activación inválidos.' }, 400);
+    const created = await env.DB.transaction(async db => {
+      const existing = await db.prepare('SELECT id FROM pos_businesses WHERE code=?').bind(businessCode).first<any>();
+      if (existing) return null;
+      const business = await db.prepare("INSERT INTO pos_businesses (code,name,status,plan,created_at,updated_at) VALUES (?,?,'active','monthly',?,?) RETURNING id").bind(businessCode,businessName,now(),now()).first<any>();
+      const businessId = Number(business?.id);
+      if (!businessId) throw new Error('No fue posible crear el negocio.');
+      const owner = await db.prepare("INSERT INTO pos_users (business_id,name,username,password_hash,role,permissions,created_at) VALUES (?,?,?,?,'owner','[]',?) RETURNING id").bind(businessId,ownerName,username,await hashPassword(password),now()).first<any>();
+      await db.prepare('INSERT INTO pos_business_state (id,business_id,products,sales,categories,receipt_settings,category_catalog_version,updated_at) VALUES (?,?,?,?,?,?,1,?)').bind(businessId,businessId,'[]','[]','[]',JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName }),now()).run();
+      return { businessId, ownerId: Number(owner?.id) };
+    });
+    if (!created) return json({ error: 'Esta invitación ya fue usada.' }, 409);
+    const origin = new URL(request.url).origin;
+    return json({ ok: true, accessUrl: `${origin}/?business=${encodeURIComponent(businessCode)}` }, 201);
+  }
+  if (data.action === 'set-business-status') {
+    if (!provisionAuthorized(request)) return json({ error: 'No autorizado.' }, 401);
+    const businessCode = String(data.businessCode || '').trim().toUpperCase().slice(0, 40);
+    const status = String(data.status || '').trim().toLowerCase();
+    if (!/^[A-Z0-9-]{6,40}$/.test(businessCode) || !['active','suspended'].includes(status)) return json({ error: 'Datos de estado inválidos.' }, 400);
+    const result = await env.DB.prepare('UPDATE pos_businesses SET status=?,updated_at=? WHERE code=?').bind(status,now(),businessCode).run();
+    if (!result.meta.changes) return json({ error: 'No encontramos el negocio indicado.' }, 404);
+    return json({ ok: true, businessCode, status });
+  }
   if (data.action === 'demo-login') {
     if (!DEMO_MODE) return json({ error: 'La demostración no está disponible en esta instalación.' }, 404);
     let user = await env.DB.prepare("SELECT * FROM pos_users WHERE username='demostracion'").first<any>();
@@ -482,10 +524,11 @@ export async function POST(request: Request) {
     return json({ user: { id: result.meta.last_row_id, name: data.name.trim(), username: data.username.trim(), role: 'owner', permissions: [] } }, 201, { 'Set-Cookie': await session(Number(result.meta.last_row_id)) });
   }
   if (data.action === 'login') {
-    const user = await env.DB.prepare('SELECT * FROM pos_users WHERE username=?').bind(String(data.username || '').trim().toLowerCase()).first<any>();
+    const businessCode = String(data.businessCode || '').trim().toUpperCase();
+    const user = await env.DB.prepare("SELECT u.* FROM pos_users u JOIN pos_businesses b ON b.id=u.business_id AND b.status='active' WHERE u.username=? AND (?='' OR b.code=?)").bind(String(data.username || '').trim().toLowerCase(),businessCode,businessCode).first<any>();
     if (!user || !(await validPassword(String(data.password || ''), user.password_hash))) return json({ error: 'Usuario o contraseña incorrectos.' }, 401);
-    const safeUser = { id: user.id, name: user.name, username: user.username, role: user.role, permissions: JSON.parse(user.permissions || '[]') };
-    return json({ user: safeUser, cashShift: await activeCashShift(safeUser) }, 200, { 'Set-Cookie': await session(user.id) });
+    const safeUser = { id: user.id, name: user.name, username: user.username, role: user.role, permissions: JSON.parse(user.permissions || '[]'), businessId: Number(user.business_id || 1) };
+    return json({ user: safeUser, cashShift: await activeCashShift(safeUser) }, 200, { 'Set-Cookie': await session(user.id, safeUser.businessId) });
   }
   if (data.action === 'open-cash') {
     const actor = await current(request); if (!actor || !canUseCash(actor)) return json({ error: 'No tienes permiso para abrir la caja.' }, 403);
