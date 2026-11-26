@@ -101,6 +101,7 @@ async function seedDemoData() {
         const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,String(orderNumber || ''),String(customerName || ''),String(customerPhone || ''),String(customerDocument || ''),String(deviceType || 'Otro'),String(deviceBrand || ''),String(deviceModel || ''),String(deviceIdentifier || ''),String(physicalCondition || ''),String(reportedIssue || ''),String(plannedService || ''),String(status || 'Recibido'),Number(estimatedTotal || 0),Number(partsCost || 0),Number(finalTotal || 0),1,'Demostración',createdAt,createdAt).run();
       }
     }
+    let demoStep = 'técnicos';
     try {
     const demoTechnicians = [
       { name: 'Valentina Moreno', phone: '300 555 0191', document: '1032456789', commission: 35 },
@@ -131,10 +132,11 @@ async function seedDemoData() {
         if (createdSettlement) await db.prepare('INSERT INTO pos_technician_settlement_items (business_id,settlement_id,order_id,order_number,final_total,parts_cost,commission_percent,commission_amount) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (order_id) DO NOTHING').bind(businessId,createdSettlement.id,paidOrder.id,paidOrder.order_number,paidOrder.final_total,paidOrder.parts_cost,paidOrder.commission_percent,paidOrder.commission_amount).run();
       }
     }
+    demoStep = 'devolución';
     const existingReturn = await db.prepare("SELECT id FROM pos_returns WHERE business_id=? AND source_type='sale' AND source_id='demo-sale-002' LIMIT 1").bind(businessId).first<any>();
     if (!existingReturn) await db.prepare("INSERT INTO pos_returns (business_id,return_type,source_type,source_id,source_number,amount,payment_method,reason,restock,items,actor_name,shift_id,created_at) VALUES (?,'sale_return','sale','demo-sale-002','V-00002',78000,'Tarjeta','El producto no era compatible con el equipo del cliente.',1,?,'Sofía Herrera',NULL,?)").bind(businessId,JSON.stringify([{ id: 104, name: 'Audífonos Bluetooth AirBeat', qty: 1, price: 78000 }]),'2026-11-26T10:28:00.000Z').run();
     } catch (error: any) {
-      throw new Error(`No pudimos preparar los datos operativos de demostración: ${error?.message || 'error desconocido'}`);
+      throw new Error(`No pudimos preparar ${demoStep} de demostración: ${error?.message || 'error desconocido'}`);
     }
   });
 }
