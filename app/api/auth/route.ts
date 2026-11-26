@@ -108,6 +108,8 @@ async function seedDemoData() {
       const estimatedTotal = Number(item[12]), partsCost = Number(item[13]), finalTotal = Number(item[14]);
       await db.prepare("UPDATE pos_service_orders SET physical_condition=?,reported_issue=?,planned_service=?,status=?,estimated_total=?,parts_cost=?,final_total=?,updated_at=? WHERE business_id=? AND order_number=? AND status NOT IN ('Recibido','Esperando respuesta del cliente','Reparado / listo para entregar','Entregado','Sin reparación')").bind(physicalCondition,reportedIssue,plannedService,status,estimatedTotal,partsCost,finalTotal,now(),businessId,orderNumber).run();
     }
+    await db.prepare("UPDATE pos_service_orders SET status='Esperando respuesta del cliente',planned_service='Diagnóstico de encendido',updated_at=? WHERE business_id=? AND order_number='OS-002' AND status='Recibido' AND planned_service='Esperando respuesta del cliente'").bind(now(),businessId).run();
+    await db.prepare("UPDATE pos_service_orders SET planned_service='Revisión de display',updated_at=? WHERE business_id=? AND order_number='OS-003' AND status='Recibido' AND planned_service='Recibido'").bind(now(),businessId).run();
     let demoStep = 'técnicos';
     try {
     const demoTechnicians = [
