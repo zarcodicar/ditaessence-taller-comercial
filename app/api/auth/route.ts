@@ -318,26 +318,26 @@ export async function GET(request: Request) {
   }
   if (url.searchParams.get('resource') === 'service-settings') {
     if (!user || user.role !== 'owner') return json({ error: 'Solo el propietario puede configurar comisiones.' }, 403);
-    const settings = await env.DB.prepare('SELECT technician_commission_percent,updated_by_name,updated_at FROM pos_service_settings WHERE id=1').first<any>();
-    const technicians = await env.DB.prepare("SELECT e.id,e.name,e.phone,e.position,COALESCE(c.commission_percent,0) AS commission_percent,(c.technician_id IS NOT NULL) AS has_custom_commission FROM pos_employees e LEFT JOIN pos_service_technician_commissions c ON c.technician_id=e.id WHERE e.is_technician=1 AND e.active=1 ORDER BY e.name").all<any>();
+    const settings = await env.DB.prepare('SELECT technician_commission_percent,updated_by_name,updated_at FROM pos_service_settings WHERE business_id=?').bind(user.businessId).first<any>();
+    const technicians = await env.DB.prepare("SELECT e.id,e.name,e.phone,e.position,COALESCE(c.commission_percent,0) AS commission_percent,(c.technician_id IS NOT NULL) AS has_custom_commission FROM pos_employees e LEFT JOIN pos_service_technician_commissions c ON c.technician_id=e.id WHERE e.business_id=? AND e.is_technician=1 AND e.active=1 ORDER BY e.name").bind(user.businessId).all<any>();
     return json({ settings, technicians: technicians.results || [] });
   }
   if (url.searchParams.get('resource') === 'service-technician-commission') {
     if (!user || !canUseServices(user)) return json({ error: 'No tienes permiso para consultar comisiones.' }, 403);
     const technicianId = Number(url.searchParams.get('technicianId') || 0);
     if (!technicianId) return json({ error: 'Técnico inválido.' }, 400);
-    const settings = await env.DB.prepare('SELECT technician_commission_percent FROM pos_service_settings WHERE id=1').first<any>();
-    const custom = await env.DB.prepare('SELECT commission_percent FROM pos_service_technician_commissions WHERE technician_id=?').bind(technicianId).first<any>();
+    const settings = await env.DB.prepare('SELECT technician_commission_percent FROM pos_service_settings WHERE business_id=?').bind(user.businessId).first<any>();
+    const custom = await env.DB.prepare('SELECT commission_percent FROM pos_service_technician_commissions WHERE business_id=? AND technician_id=?').bind(user.businessId,technicianId).first<any>();
     return json({ commissionPercent: Number(custom?.commission_percent ?? 0), hasCustom: Boolean(custom) });
   }
   if (url.searchParams.get('resource') === 'service-technicians') {
     if (!user || !canUseServices(user)) return json({ error: 'No tienes permiso para consultar técnicos.' }, 403);
-    const technicians = await env.DB.prepare("SELECT e.id,e.name,e.phone,e.position,COALESCE(c.commission_percent,0) AS commission_percent,(c.technician_id IS NOT NULL) AS has_custom_commission FROM pos_employees e LEFT JOIN pos_service_technician_commissions c ON c.technician_id=e.id WHERE e.is_technician=1 AND e.active=1 ORDER BY e.name").all<any>();
+    const technicians = await env.DB.prepare("SELECT e.id,e.name,e.phone,e.position,COALESCE(c.commission_percent,0) AS commission_percent,(c.technician_id IS NOT NULL) AS has_custom_commission FROM pos_employees e LEFT JOIN pos_service_technician_commissions c ON c.technician_id=e.id WHERE e.business_id=? AND e.is_technician=1 AND e.active=1 ORDER BY e.name").bind(user.businessId).all<any>();
     return json({ technicians: technicians.results || [] });
   }
   if (url.searchParams.get('resource') === 'employees') {
     if (!user || user.role !== 'owner') return json({ error: 'Solo el propietario puede consultar trabajadores.' }, 403);
-    const employees = await env.DB.prepare('SELECT id,name,phone,document,position,is_technician,active,created_at,updated_at FROM pos_employees ORDER BY active DESC,name').all<any>();
+    const employees = await env.DB.prepare('SELECT id,name,phone,document,position,is_technician,active,created_at,updated_at FROM pos_employees WHERE business_id=? ORDER BY active DESC,name').bind(user.businessId).all<any>();
     return json({ employees: employees.results || [] });
   }
   if (url.searchParams.get('resource') === 'technician-ledger') {
@@ -345,7 +345,7 @@ export async function GET(request: Request) {
     const from=url.searchParams.get('from')||'', to=url.searchParams.get('to')||'';
     const requestedTimeZone=String(url.searchParams.get('timeZone')||'UTC');
     const timeZone=/^[A-Za-z_]+(?:\/[A-Za-z0-9_+\-]+)+$/.test(requestedTimeZone)&&requestedTimeZone.length<=64?requestedTimeZone:'UTC';
-    return json(await readLedger(env.DB,from,to,timeZone));
+    return json(await readLedger(env.DB,from,to,timeZone,user.businessId));
   }
   if (url.searchParams.get('resource') === 'employee-payroll') {
     if (!user || user.role !== 'owner') return json({ error: 'Solo el propietario puede consultar pagos de empleados.' }, 403);
@@ -459,8 +459,8 @@ export async function GET(request: Request) {
       LIMIT 200`).bind(from, from, to, to).all<any>();
     return json({ closures: closures.results || [] });
   }
-  const workers = user?.role === 'owner' ? await env.DB.prepare("SELECT id, name, username, role, permissions FROM pos_users WHERE role='worker' ORDER BY name").all<any>() : null;
-  const notifications = user?.role === 'owner' ? await env.DB.prepare('SELECT * FROM pos_notifications ORDER BY id DESC LIMIT 200').all<any>() : null;
+  const workers = user?.role === 'owner' ? await env.DB.prepare("SELECT id, name, username, role, permissions FROM pos_users WHERE business_id=? AND role='worker' ORDER BY name").bind(user.businessId).all<any>() : null;
+  const notifications = user?.role === 'owner' ? await env.DB.prepare('SELECT * FROM pos_notifications WHERE business_id=? ORDER BY id DESC LIMIT 200').bind(user.businessId).all<any>() : null;
   const state = user ? await env.DB.prepare('SELECT products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>() : null;
   return json({ initialized: Number(count?.count || 0) > 0, setupProtected: Boolean(SETUP_TOKEN), user, workers: workers?.results.map(worker => ({ ...worker, permissions: JSON.parse(worker.permissions || '[]') })) || [], notifications: notifications?.results || [], cashShift: await activeCashShift(user), businessState: state ? { products: JSON.parse(state.products || '[]'), sales: JSON.parse(state.sales || '[]'), categories: Number(state.category_catalog_version || 0) >= 1 ? JSON.parse(state.categories || '[]') : [], receiptSettings: receiptSettings(JSON.parse(state.receipt_settings || '{}')), updatedAt: state.updated_at } : null });
 }
@@ -483,6 +483,7 @@ export async function POST(request: Request) {
       if (!businessId) throw new Error('No fue posible crear el negocio.');
       const owner = await db.prepare("INSERT INTO pos_users (business_id,name,username,password_hash,role,permissions,created_at) VALUES (?,?,?,?,'owner','[]',?) RETURNING id").bind(businessId,ownerName,username,await hashPassword(password),now()).first<any>();
       await db.prepare('INSERT INTO pos_business_state (id,business_id,products,sales,categories,receipt_settings,category_catalog_version,updated_at) VALUES (?,?,?,?,?,?,1,?)').bind(businessId,businessId,'[]','[]','[]',JSON.stringify({ ...DEFAULT_RECEIPT_SETTINGS, businessName }),now()).run();
+      await db.prepare("INSERT INTO pos_service_settings (id,business_id,technician_commission_percent,updated_by_name,updated_at) VALUES (?, ?, 30, 'Sistema', ?) ON CONFLICT (id) DO NOTHING").bind(businessId,businessId,now()).run();
       return { businessId, ownerId: Number(owner?.id) };
     });
     if (!created) return json({ error: 'Esta invitación ya fue usada.' }, 409);
@@ -676,23 +677,23 @@ export async function POST(request: Request) {
   if (data.action === 'save-service-settings') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede configurar comisiones.' }, 403);
     const percent = Number(data.technicianCommissionPercent); if (!Number.isFinite(percent) || percent < 0 || percent > 100) return json({ error: 'El porcentaje debe estar entre 0 y 100.' }, 400);
-    await env.DB.prepare('UPDATE pos_service_settings SET technician_commission_percent=?,updated_by_name=?,updated_at=? WHERE id=1').bind(percent,owner.name,now()).run();
+    await env.DB.prepare('UPDATE pos_service_settings SET technician_commission_percent=?,updated_by_name=?,updated_at=? WHERE business_id=?').bind(percent,owner.name,now(),owner.businessId).run();
     return json({ ok: true, percent });
   }
   if (data.action === 'create-employee') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede agregar trabajadores.' }, 403);
     const name=String(data.name||'').trim(),position=String(data.position||'').trim(),isTechnician=position==='Técnico'||Boolean(data.isTechnician); if(!name)return json({error:'Escribe el nombre del trabajador.'},400);
-    const result=await env.DB.prepare('INSERT INTO pos_employees (name,phone,document,position,is_technician,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').bind(name,String(data.phone||'').trim(),String(data.document||'').trim(),position,isTechnician?1:0,data.active===false?0:1,now(),now()).run();
+    const result=await env.DB.prepare('INSERT INTO pos_employees (business_id,name,phone,document,position,is_technician,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)').bind(owner.businessId,name,String(data.phone||'').trim(),String(data.document||'').trim(),position,isTechnician?1:0,data.active===false?0:1,now(),now()).run();
     return json({ employee:{id:result.meta.last_row_id,name,phone:String(data.phone||'').trim(),document:String(data.document||'').trim(),position,is_technician:isTechnician?1:0,active:data.active===false?0:1} },201);
   }
   if (data.action === 'update-employee') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede editar trabajadores.' }, 403);
     const id=Number(data.employeeId),name=String(data.name||'').trim(),position=String(data.position||'').trim(),isTechnician=position==='Técnico'||Boolean(data.isTechnician); if(!id||!name)return json({error:'Datos del trabajador incompletos.'},400);
-    await env.DB.prepare('UPDATE pos_employees SET name=?,phone=?,document=?,position=?,is_technician=?,active=?,updated_at=? WHERE id=?').bind(name,String(data.phone||'').trim(),String(data.document||'').trim(),position,isTechnician?1:0,data.active===false?0:1,now(),id).run(); return json({ok:true});
+    await env.DB.prepare('UPDATE pos_employees SET name=?,phone=?,document=?,position=?,is_technician=?,active=?,updated_at=? WHERE business_id=? AND id=?').bind(name,String(data.phone||'').trim(),String(data.document||'').trim(),position,isTechnician?1:0,data.active===false?0:1,now(),owner.businessId,id).run(); return json({ok:true});
   }
   if (data.action === 'delete-employee') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede eliminar trabajadores.' }, 403);
-    await env.DB.prepare('DELETE FROM pos_employees WHERE id=?').bind(Number(data.employeeId)).run(); return json({ok:true});
+    await env.DB.prepare('DELETE FROM pos_employees WHERE business_id=? AND id=?').bind(owner.businessId,Number(data.employeeId)).run(); return json({ok:true});
   }
   if (data.action === 'assign-service-technician') {
     const actor = await current(request); if (!actor || !canUseServices(actor)) return json({ error: 'No tienes permiso para asignar técnicos.' }, 403);
