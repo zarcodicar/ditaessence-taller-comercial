@@ -899,7 +899,7 @@ export async function POST(request: Request) {
       if (savedProducts.some((item: any) => !incomingIds.has(String(item?.id)))) return json({ error: 'Los trabajadores no pueden borrar productos del inventario.' }, 403);
     }
     const updatedAt = now();
-    await env.DB.prepare("INSERT INTO pos_business_state (id, business_id, products, sales, categories, receipt_settings, category_catalog_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO UPDATE SET products=EXCLUDED.products, sales=EXCLUDED.sales, categories=EXCLUDED.categories, receipt_settings=EXCLUDED.receipt_settings, category_catalog_version=1, updated_at=EXCLUDED.updated_at").bind(actor.businessId, actor.businessId, JSON.stringify(products), JSON.stringify(sales), JSON.stringify(categories), JSON.stringify(savedReceiptSettings), updatedAt).run();
+    await env.DB.prepare("INSERT INTO pos_business_state (id, business_id, products, sales, categories, receipt_settings, category_catalog_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO UPDATE SET products=EXCLUDED.products, sales=EXCLUDED.sales, categories=EXCLUDED.categories, receipt_settings=EXCLUDED.receipt_settings, category_catalog_version=1, updated_at=EXCLUDED.updated_at").bind(actor.businessId, actor.businessId, JSON.stringify(products), JSON.stringify(sales), JSON.stringify(categories), JSON.stringify(savedReceiptSettings), updatedAt).run();
     return json({ ok: true, updatedAt });
   }
   if (data.action === 'restore-backup') {
