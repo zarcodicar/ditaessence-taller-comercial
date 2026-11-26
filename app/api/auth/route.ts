@@ -350,7 +350,7 @@ export async function GET(request: Request) {
   if (url.searchParams.get('resource') === 'employee-payroll') {
     if (!user || user.role !== 'owner') return json({ error: 'Solo el propietario puede consultar pagos de empleados.' }, 403);
     const from = String(url.searchParams.get('from') || ''), to = String(url.searchParams.get('to') || '');
-    const employees = await env.DB.prepare(`SELECT e.id,e.name,e.position,COALESCE(c.commission_percent,0) AS commission_percent,COALESCE(SUM(CASE WHEN o.commission_status IN ('pending','paid') THEN o.commission_amount ELSE 0 END),0) AS commission_total,COUNT(o.id) FILTER (WHERE o.commission_status IN ('pending','paid')) AS repairs_count,COALESCE(SUM(CASE WHEN o.commission_status IN ('pending','paid') THEN o.final_total ELSE 0 END),0) AS repairs_total FROM pos_employees e LEFT JOIN pos_service_technician_commissions c ON c.technician_id=e.id LEFT JOIN pos_service_orders o ON o.technician_user_id=e.id AND (?='' OR substr(o.commission_settled_at,1,10)>=?) AND (?='' OR substr(o.commission_settled_at,1,10)<=?) WHERE e.active=1 AND e.is_technician=1 GROUP BY e.id,e.name,e.position,c.commission_percent ORDER BY e.name`).bind(from,from,to,to).all<any>();
+    const employees = await env.DB.prepare(`SELECT e.id,e.name,e.position,COALESCE(c.commission_percent,0) AS commission_percent,COALESCE(SUM(CASE WHEN o.commission_status IN ('pending','paid') THEN o.commission_amount ELSE 0 END),0) AS commission_total,COUNT(o.id) FILTER (WHERE o.commission_status IN ('pending','paid')) AS repairs_count,COALESCE(SUM(CASE WHEN o.commission_status IN ('pending','paid') THEN o.final_total ELSE 0 END),0) AS repairs_total FROM pos_employees e LEFT JOIN pos_service_technician_commissions c ON c.technician_id=e.id LEFT JOIN pos_service_orders o ON o.business_id=e.business_id AND o.technician_user_id=e.id AND (?='' OR substr(o.commission_settled_at,1,10)>=?) AND (?='' OR substr(o.commission_settled_at,1,10)<=?) WHERE e.business_id=? AND e.active=1 AND e.is_technician=1 GROUP BY e.id,e.name,e.position,c.commission_percent ORDER BY e.name`).bind(from,from,to,to,user.businessId).all<any>();
     return json({ employees: employees.results || [], from, to });
   }
   if (url.searchParams.get('resource') === 'service-commissions') {
@@ -358,13 +358,13 @@ export async function GET(request: Request) {
     const from = String(url.searchParams.get('from') || ''), to = String(url.searchParams.get('to') || '');
     const requestedTimeZone=String(url.searchParams.get('timeZone')||'UTC');
     const timeZone=/^[A-Za-z_]+(?:\/[A-Za-z0-9_+\-]+)+$/.test(requestedTimeZone)&&requestedTimeZone.length<=64?requestedTimeZone:'UTC';
-    const commissions = await env.DB.prepare(`SELECT id,order_number,technician_user_id,technician_name,final_total,parts_cost,commission_percent,commission_base,commission_amount,commission_status,commission_settled_at,commission_paid_at FROM pos_service_orders WHERE commission_status IN ('pending','paid') AND (?='' OR (commission_settled_at::timestamptz AT TIME ZONE ?)::date>=CAST(NULLIF(?,'') AS date)) AND (?='' OR (commission_settled_at::timestamptz AT TIME ZONE ?)::date<=CAST(NULLIF(?,'') AS date)) ORDER BY commission_settled_at DESC`).bind(from,timeZone,from,to,timeZone,to).all<any>();
+    const commissions = await env.DB.prepare(`SELECT id,order_number,technician_user_id,technician_name,final_total,parts_cost,commission_percent,commission_base,commission_amount,commission_status,commission_settled_at,commission_paid_at FROM pos_service_orders WHERE business_id=? AND commission_status IN ('pending','paid') AND (?='' OR (commission_settled_at::timestamptz AT TIME ZONE ?)::date>=CAST(NULLIF(?,'') AS date)) AND (?='' OR (commission_settled_at::timestamptz AT TIME ZONE ?)::date<=CAST(NULLIF(?,'') AS date)) ORDER BY commission_settled_at DESC`).bind(user.businessId,from,timeZone,from,to,timeZone,to).all<any>();
     return json({ commissions: commissions.results || [] });
   }
   if (url.searchParams.get('resource') === 'my-service-commission') {
     if (!user || !canUseServices(user)) return json({ error: 'No tienes permiso para consultar comisiones.' }, 403);
     const today=now().slice(0,10), owner=user.role==='owner';
-    const row=await env.DB.prepare(`SELECT COALESCE(SUM(commission_amount),0) AS total,COALESCE(SUM(CASE WHEN commission_status='pending' THEN commission_amount ELSE 0 END),0) AS pending,COALESCE(SUM(CASE WHEN commission_status='paid' THEN commission_amount ELSE 0 END),0) AS paid,COUNT(*) AS orders_count FROM pos_service_orders WHERE commission_status IN ('pending','paid') AND substr(commission_settled_at,1,10)=? AND (?=1 OR technician_user_id=?)`).bind(today,owner?1:0,user.id).first<any>();
+    const row=await env.DB.prepare(`SELECT COALESCE(SUM(commission_amount),0) AS total,COALESCE(SUM(CASE WHEN commission_status='pending' THEN commission_amount ELSE 0 END),0) AS pending,COALESCE(SUM(CASE WHEN commission_status='paid' THEN commission_amount ELSE 0 END),0) AS paid,COUNT(*) AS orders_count FROM pos_service_orders WHERE business_id=? AND commission_status IN ('pending','paid') AND substr(commission_settled_at,1,10)=? AND (?=1 OR technician_user_id=?)`).bind(user.businessId,today,owner?1:0,user.id).first<any>();
     return json({ summary: row || {total:0,pending:0,paid:0,orders_count:0} });
   }
   if (url.searchParams.get('resource') === 'service-orders') {
@@ -948,14 +948,14 @@ export async function POST(request: Request) {
   if (data.action === 'create-worker') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede crear usuarios.' }, 403);
     if (!data.name?.trim() || !data.username?.trim() || !data.password || data.password.length < 6) return json({ error: 'Completa los datos y usa una contraseña de al menos 6 caracteres.' }, 400);
-    try { const result = await env.DB.prepare('INSERT INTO pos_users (name, username, password_hash, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(data.name.trim(), data.username.trim().toLowerCase(), await hashPassword(data.password), 'worker', JSON.stringify(data.permissions || defaultPermissions), now()).run(); return json({ worker: { id: result.meta.last_row_id, name: data.name.trim(), username: data.username.trim(), role: 'worker', permissions: data.permissions || defaultPermissions } }, 201); } catch { return json({ error: 'Ese nombre de usuario ya existe.' }, 409); }
+    try { const result = await env.DB.prepare('INSERT INTO pos_users (business_id,name, username, password_hash, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(owner.businessId,data.name.trim(), data.username.trim().toLowerCase(), await hashPassword(data.password), 'worker', JSON.stringify(data.permissions || defaultPermissions), now()).run(); return json({ worker: { id: result.meta.last_row_id, name: data.name.trim(), username: data.username.trim(), role: 'worker', permissions: data.permissions || defaultPermissions } }, 201); } catch { return json({ error: 'Ese nombre de usuario ya existe.' }, 409); }
   }
   if (data.action === 'update-worker') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede cambiar permisos.' }, 403);
-    const existing = await env.DB.prepare("SELECT id FROM pos_users WHERE id=? AND role='worker'").bind(Number(data.workerId)).first(); if (!existing) return json({ error: 'No encontramos ese trabajador.' }, 404);
+    const existing = await env.DB.prepare("SELECT id FROM pos_users WHERE business_id=? AND id=? AND role='worker'").bind(owner.businessId,Number(data.workerId)).first(); if (!existing) return json({ error: 'No encontramos ese trabajador.' }, 404);
     if (!data.name?.trim() || !data.username?.trim()) return json({ error: 'Nombre y usuario son obligatorios.' }, 400);
     const passwordPart = data.password ? ', password_hash=?' : ''; const bindings: any[] = [data.name.trim(), data.username.trim().toLowerCase(), JSON.stringify(data.permissions || defaultPermissions)]; if (data.password) { if (data.password.length < 6) return json({ error: 'La contraseña debe tener al menos 6 caracteres.' }, 400); bindings.push(await hashPassword(data.password)); } bindings.push(Number(data.workerId));
-    try { await env.DB.prepare(`UPDATE pos_users SET name=?, username=?, permissions=?${passwordPart} WHERE id=? AND role='worker'`).bind(...bindings).run(); } catch { return json({ error: 'Ese usuario ya existe.' }, 409); }
+    bindings.push(owner.businessId); try { await env.DB.prepare(`UPDATE pos_users SET name=?, username=?, permissions=?${passwordPart} WHERE id=? AND business_id=? AND role='worker'`).bind(...bindings).run(); } catch { return json({ error: 'Ese usuario ya existe.' }, 409); }
     return json({ ok: true });
   }
   if (data.action === 'update-owner') {
@@ -972,12 +972,12 @@ export async function POST(request: Request) {
   }
   if (data.action === 'delete-worker') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede eliminar usuarios.' }, 403);
-    await env.DB.batch([env.DB.prepare('DELETE FROM pos_sessions WHERE user_id=?').bind(Number(data.workerId)), env.DB.prepare("DELETE FROM pos_users WHERE id=? AND role='worker'").bind(Number(data.workerId))]);
+    await env.DB.batch([env.DB.prepare('DELETE FROM pos_sessions WHERE business_id=? AND user_id=?').bind(owner.businessId,Number(data.workerId)), env.DB.prepare("DELETE FROM pos_users WHERE business_id=? AND id=? AND role='worker'").bind(owner.businessId,Number(data.workerId))]);
     return json({ ok: true });
   }
   if (data.action === 'notify-owner') {
     const actor = await current(request); if (!actor) return json({ error: 'Sesión requerida.' }, 401);
-    await env.DB.prepare('INSERT INTO pos_notifications (type, severity, message, actor_name, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(String(data.type || 'Actividad'), String(data.severity || 'info'), String(data.message || ''), actor.name, data.entityType ? String(data.entityType) : null, data.entityId ? String(data.entityId) : null, JSON.stringify(data.details || {}), now()).run();
+    await env.DB.prepare('INSERT INTO pos_notifications (business_id,type, severity, message, actor_name, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(actor.businessId,String(data.type || 'Actividad'), String(data.severity || 'info'), String(data.message || ''), actor.name, data.entityType ? String(data.entityType) : null, data.entityId ? String(data.entityId) : null, JSON.stringify(data.details || {}), now()).run();
     return json({ ok: true });
   }
   if (data.action === 'mark-notifications-read') {
@@ -985,14 +985,14 @@ export async function POST(request: Request) {
     const ids = Array.isArray(data.ids) ? data.ids.map(Number).filter(Number.isFinite) : [];
     if (ids.length) {
       const marks = ids.map(() => '?').join(',');
-      await env.DB.prepare(`UPDATE pos_notifications SET read_at=? WHERE id IN (${marks})`).bind(now(), ...ids).run();
-    } else await env.DB.prepare('UPDATE pos_notifications SET read_at=? WHERE read_at IS NULL').bind(now()).run();
+      await env.DB.prepare(`UPDATE pos_notifications SET read_at=? WHERE business_id=? AND id IN (${marks})`).bind(now(), owner.businessId, ...ids).run();
+    } else await env.DB.prepare('UPDATE pos_notifications SET read_at=? WHERE business_id=? AND read_at IS NULL').bind(now(), owner.businessId).run();
     return json({ ok: true });
   }
   if (data.action === 'delete-notification') {
     const owner = await current(request); if (!owner || owner.role !== 'owner') return json({ error: 'Solo el propietario puede eliminar notificaciones.' }, 403);
     const id = Number(data.id); if (!Number.isInteger(id) || id < 1) return json({ error: 'Notificación no válida.' }, 400);
-    await env.DB.prepare('DELETE FROM pos_notifications WHERE id=?').bind(id).run();
+    await env.DB.prepare('DELETE FROM pos_notifications WHERE business_id=? AND id=?').bind(owner.businessId,id).run();
     return json({ ok: true });
   }
   if (data.action === 'logout') { const id = cookie(request); if (id) await env.DB.prepare('DELETE FROM pos_sessions WHERE id=?').bind(id).run(); return json({ ok: true }, 200, { 'Set-Cookie': `${SESSION}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0` }); }
