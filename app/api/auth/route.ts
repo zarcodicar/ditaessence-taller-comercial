@@ -421,25 +421,24 @@ export async function GET(request: Request) {
   }
   if (url.searchParams.get('resource') === 'backup') {
     if (!user || user.role !== 'owner') return json({ error: 'Solo el propietario puede descargar respaldos.' }, 403);
-    if (Number(user.businessId) !== 1) return json({ error: 'El respaldo individual se habilitará al completar su migración segura.' }, 503);
     const [users, employees, notifications, shifts, movements, businessState, syncedSales, serviceOrders, serviceEvents, servicePayments, serviceParts, serviceSettings, serviceTechnicianCommissions, technicianSettlements, technicianSettlementItems, servicePhotos, returns] = await Promise.all([
-      env.DB.prepare('SELECT id, name, username, password_hash, role, permissions, created_at FROM pos_users ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_employees ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT id, type, severity, message, actor_name, entity_type, entity_id, details, created_at, read_at FROM pos_notifications ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_cash_shifts ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT id, shift_id, type, amount, reason, actor_name, created_at FROM pos_cash_movements ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT id, products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT client_id, sale_number, payload, synced_at FROM pos_synced_sales ORDER BY synced_at').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_orders ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_order_events ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_payments ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_parts ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_settings ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_technician_commissions ORDER BY technician_id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_technician_settlements ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_technician_settlement_items ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_service_photos ORDER BY id').all<any>(),
-      env.DB.prepare('SELECT * FROM pos_returns ORDER BY id').all<any>(),
+      env.DB.prepare('SELECT id, name, username, password_hash, role, permissions, created_at FROM pos_users WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_employees WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT id, type, severity, message, actor_name, entity_type, entity_id, details, created_at, read_at FROM pos_notifications WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_cash_shifts WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT id, shift_id, type, amount, reason, actor_name, created_at FROM pos_cash_movements WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT id, products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT client_id, sale_number, payload, synced_at FROM pos_synced_sales WHERE business_id=? ORDER BY synced_at').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_orders WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_order_events WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_payments WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_parts WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_settings WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_technician_commissions WHERE business_id=? ORDER BY technician_id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_technician_settlements WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_technician_settlement_items WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_service_photos WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
+      env.DB.prepare('SELECT * FROM pos_returns WHERE business_id=? ORDER BY id').bind(user.businessId).all<any>(),
     ]);
     const createdAt = now();
     const backup = { format: 'cellhouse-pos-backup', version: 6, createdAt, data: { users: users.results || [], employees: employees.results || [], notifications: notifications.results || [], cashShifts: shifts.results || [], cashMovements: movements.results || [], businessState: businessState.results || [], syncedSales: syncedSales.results || [], serviceOrders: serviceOrders.results || [], serviceEvents: serviceEvents.results || [], servicePayments: servicePayments.results || [], serviceParts: serviceParts.results || [], serviceSettings: serviceSettings.results || [], serviceTechnicianCommissions: serviceTechnicianCommissions.results || [], technicianSettlements: technicianSettlements.results || [], technicianSettlementItems: technicianSettlementItems.results || [], servicePhotos:servicePhotos.results||[], returns:returns.results||[] } };
@@ -453,11 +452,11 @@ export async function GET(request: Request) {
     const closures = await env.DB.prepare(`SELECT s.id, s.opening_amount, s.cash_sales, s.card_sales, s.transfer_sales, s.other_sales, s.repair_cash_income, s.repair_card_income, s.repair_transfer_income, s.sales_count, s.units_sold, s.cash_entries, s.cash_outs, s.expected_amount, s.counted_amount, s.difference, s.opened_by_name, s.opened_at, s.closed_by_name, s.closed_at,
         COALESCE((SELECT jsonb_agg(jsonb_build_object('id', m.id, 'type', m.type, 'amount', m.amount, 'reason', m.reason, 'actor_name', m.actor_name, 'created_at', m.created_at) ORDER BY m.created_at) FROM pos_cash_movements m WHERE m.shift_id=s.id), '[]'::jsonb) AS movements
       FROM pos_cash_shifts s
-      WHERE s.status='closed'
+      WHERE s.business_id=? AND s.status='closed'
         AND (? = '' OR substr(s.closed_at, 1, 10) >= ?)
         AND (? = '' OR substr(s.closed_at, 1, 10) <= ?)
       ORDER BY s.closed_at DESC
-      LIMIT 200`).bind(from, from, to, to).all<any>();
+      LIMIT 200`).bind(user.businessId, from, from, to, to).all<any>();
     return json({ closures: closures.results || [] });
   }
   const workers = user?.role === 'owner' ? await env.DB.prepare("SELECT id, name, username, role, permissions FROM pos_users WHERE business_id=? AND role='worker' ORDER BY name").bind(user.businessId).all<any>() : null;
