@@ -722,9 +722,9 @@ export async function POST(request: Request) {
   if (data.action === 'update-service-order') {
     const actor = await current(request); if (!actor || !canUseServices(actor)) return json({ error: 'No tienes permiso para editar órdenes de servicio.' }, 403);
     const id = Number(data.orderId); if (!Number.isInteger(id) || id < 1) return json({ error: 'Orden no válida.' }, 400);
-    const existing = await env.DB.prepare('SELECT id FROM pos_service_orders WHERE id=?').bind(id).first(); if (!existing) return json({ error: 'No encontramos esa orden.' }, 404);
-    await env.DB.prepare(`UPDATE pos_service_orders SET customer_name=?,customer_phone=?,customer_document=?,device_brand=?,device_model=?,device_identifier=?,device_password=?,accessories=?,physical_condition=?,reported_issue=?,planned_service=?,notes=?,estimated_total=?,parts_cost=?,final_total=?,updated_at=? WHERE id=?`).bind(String(data.customerName||'').trim(),String(data.customerPhone||'').trim(),String(data.customerDocument||'').trim(),String(data.deviceBrand||'').trim(),String(data.deviceModel||'').trim(),String(data.deviceIdentifier||'').trim(),String(data.devicePassword||'').trim(),String(data.accessories||'').trim(),String(data.physicalCondition||'').trim(),String(data.reportedIssue||'').trim(),String(data.plannedService||'').trim(),String(data.notes||'').trim(),Math.max(0,Math.round(Number(data.estimatedTotal)||0)),Math.max(0,Math.round(Number(data.partsCost)||0)),Math.max(0,Math.round(Number(data.finalTotal)||0)),now(),id).run();
-    await env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,note,actor_name,created_at) VALUES (?,'Edición',?,?,?)").bind(id,String(data.changeNote||'Datos de la orden actualizados.'),actor.name,now()).run();
+    const existing = await env.DB.prepare('SELECT id FROM pos_service_orders WHERE business_id=? AND id=?').bind(actor.businessId,id).first(); if (!existing) return json({ error: 'No encontramos esa orden.' }, 404);
+    await env.DB.prepare(`UPDATE pos_service_orders SET customer_name=?,customer_phone=?,customer_document=?,device_brand=?,device_model=?,device_identifier=?,device_password=?,accessories=?,physical_condition=?,reported_issue=?,planned_service=?,notes=?,estimated_total=?,parts_cost=?,final_total=?,updated_at=? WHERE business_id=? AND id=?`).bind(String(data.customerName||'').trim(),String(data.customerPhone||'').trim(),String(data.customerDocument||'').trim(),String(data.deviceBrand||'').trim(),String(data.deviceModel||'').trim(),String(data.deviceIdentifier||'').trim(),String(data.devicePassword||'').trim(),String(data.accessories||'').trim(),String(data.physicalCondition||'').trim(),String(data.reportedIssue||'').trim(),String(data.plannedService||'').trim(),String(data.notes||'').trim(),Math.max(0,Math.round(Number(data.estimatedTotal)||0)),Math.max(0,Math.round(Number(data.partsCost)||0)),Math.max(0,Math.round(Number(data.finalTotal)||0)),now(),actor.businessId,id).run();
+    await env.DB.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,note,actor_name,created_at) VALUES (? ,?,'Edición',?,?,?)").bind(actor.businessId,id,String(data.changeNote||'Datos de la orden actualizados.'),actor.name,now()).run();
     return json({ ok: true });
   }
   if (data.action === 'delete-service-order') {
@@ -733,9 +733,9 @@ export async function POST(request: Request) {
   if (data.action === 'process-service-order') {
     const actor = await current(request); if (!actor || !canUseServices(actor)) return json({ error: 'No tienes permiso para procesar órdenes.' }, 403);
     const id = Number(data.orderId); if (!Number.isInteger(id) || id < 1) return json({ error: 'Orden no válida.' }, 400);
-    const order = await env.DB.prepare('SELECT order_number,status,commission_status FROM pos_service_orders WHERE id=?').bind(id).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
+    const order = await env.DB.prepare('SELECT order_number,status,commission_status FROM pos_service_orders WHERE business_id=? AND id=?').bind(actor.businessId,id).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
     if(['Entregado','Cancelado','Sin reparación'].includes(order.status))return json({error:'Esta orden ya está cerrada.'},409);
-    const technicianId=Number(data.technicianUserId||0),technician=await env.DB.prepare("SELECT id,name FROM pos_employees WHERE id=? AND is_technician=1 AND active=1").bind(technicianId).first<any>();
+    const technicianId=Number(data.technicianUserId||0),technician=await env.DB.prepare("SELECT id,name FROM pos_employees WHERE business_id=? AND id=? AND is_technician=1 AND active=1").bind(actor.businessId,technicianId).first<any>();
     if(!technician)return json({error:'Selecciona el técnico activo que realizó la reparación.'},400);
     if(['pending','paid'].includes(order.commission_status))return json({error:'Esta orden ya generó una comisión y no permite cambiar de técnico.'},409);
     const diagnosis=String(data.diagnosis||'').trim(), report=String(data.technicalReport||'').trim(), parts=String(data.partsUsed||'').trim();
@@ -914,21 +914,21 @@ export async function POST(request: Request) {
     const actor = await current(request); if (!actor || !canUseCash(actor)) return json({ error: 'No tienes permiso para registrar movimientos manuales.' }, 403);
     const type = data.type === 'out' ? 'out' : data.type === 'in' ? 'in' : ''; const amount = Math.round(Number(data.amount)); const reason = String(data.reason || '').trim();
     if (!type || !Number.isFinite(amount) || amount <= 0 || !reason) return json({ error: 'Completa el tipo, monto y motivo del movimiento.' }, 400);
-    const shift = await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>(); if (!shift) return json({ error: 'La caja está cerrada.' }, 409);
+    const shift = await env.DB.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(actor.businessId).first<any>(); if (!shift) return json({ error: 'La caja está cerrada.' }, 409);
     const totalColumn = type === 'in' ? 'cash_entries' : 'cash_outs';
     const createdAt = now();
-    const statements = [env.DB.prepare('INSERT INTO pos_cash_movements (shift_id, type, amount, reason, actor_name, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(shift.id, type, amount, reason, actor.name, createdAt), env.DB.prepare(`UPDATE pos_cash_shifts SET ${totalColumn}=${totalColumn}+? WHERE id=? AND status='open'`).bind(amount, shift.id)];
-    if (actor.role === 'worker') statements.push(env.DB.prepare('INSERT INTO pos_notifications (type, severity, message, actor_name, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('Movimiento de caja', 'critical', `${actor.name} registró una ${type === 'in' ? 'entrada' : 'salida'} de caja.`, actor.name, 'movimiento de caja', String(shift.id), JSON.stringify({ tipo: type === 'in' ? 'Entrada' : 'Salida', monto: cop(amount), motivo: reason }), createdAt));
+    const statements = [env.DB.prepare('INSERT INTO pos_cash_movements (business_id,shift_id, type, amount, reason, actor_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(actor.businessId,shift.id, type, amount, reason, actor.name, createdAt), env.DB.prepare(`UPDATE pos_cash_shifts SET ${totalColumn}=${totalColumn}+? WHERE business_id=? AND id=? AND status='open'`).bind(amount, actor.businessId,shift.id)];
+    if (actor.role === 'worker') statements.push(env.DB.prepare('INSERT INTO pos_notifications (business_id,type, severity, message, actor_name, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(actor.businessId,'Movimiento de caja', 'critical', `${actor.name} registró una ${type === 'in' ? 'entrada' : 'salida'} de caja.`, actor.name, 'movimiento de caja', String(shift.id), JSON.stringify({ tipo: type === 'in' ? 'Entrada' : 'Salida', monto: cop(amount), motivo: reason }), createdAt));
     await env.DB.batch(statements);
     return json({ shift: await activeCashShift(actor) });
   }
   if (data.action === 'close-cash') {
     const actor = await current(request); if (!actor || !canUseCash(actor)) return json({ error: 'No tienes permiso para cerrar la caja.' }, 403);
     const countedAmount = Math.round(Number(data.countedAmount)); if (!Number.isFinite(countedAmount) || countedAmount < 0) return json({ error: 'Ingresa un conteo válido.' }, 400);
-    const shift = await env.DB.prepare("SELECT * FROM pos_cash_shifts WHERE status='open' ORDER BY id DESC LIMIT 1").first<any>(); if (!shift) return json({ error: 'La caja ya está cerrada.' }, 409);
+    const shift = await env.DB.prepare("SELECT * FROM pos_cash_shifts WHERE business_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(actor.businessId).first<any>(); if (!shift) return json({ error: 'La caja ya está cerrada.' }, 409);
     if (actor.role !== 'owner' && Number(shift.opened_by_user_id) !== Number(actor.id)) return json({ error: 'Solo quien abrió este turno o el propietario puede cerrarlo.' }, 403);
     const expected = Number(shift.opening_amount) + Number(shift.cash_sales) + Number(shift.repair_cash_income || 0) + Number(shift.cash_entries) - Number(shift.cash_outs); const difference = countedAmount - expected; const closedAt = now();
-    const business = await env.DB.prepare('SELECT sales FROM pos_business_state WHERE id=1').first<{ sales: string }>();
+    const business = await env.DB.prepare('SELECT sales FROM pos_business_state WHERE business_id=?').bind(actor.businessId).first<{ sales: string }>();
     const shiftSales = (business ? JSON.parse(business.sales || '[]') : []).filter((sale: any) => { const moment = new Date(sale?.createdAt || sale?.date || 0).getTime(); return Number.isFinite(moment) && moment >= new Date(shift.opened_at).getTime() && moment <= new Date(closedAt).getTime(); });
     const paymentTotal = (method: string) => shiftSales.reduce((sum: number, sale: any) => {
       const breakdown = sale?.paymentBreakdown;
