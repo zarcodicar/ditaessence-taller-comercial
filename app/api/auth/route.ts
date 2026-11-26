@@ -56,7 +56,7 @@ let schemaReady:Promise<void>|null=null;
 async function tables(){if(!schemaReady)schemaReady=initializeTables().catch(e=>{schemaReady=null;throw e});await schemaReady;}
 const demoProducts = [
   { id: 101, name: 'Cable USB-C reforzado 1 m', sku: 'CAB-USBC-01', barcode: '7709001001011', price: 18000, cost: 8500, stock: 24, min: 5, category: 'Cables', image: 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?auto=format&fit=crop&w=640&q=82' },
-  { id: 102, name: 'Cargador rápido 25 W USB-C', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores', image: 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=640&q=82' },
+  { id: 102, name: 'Cargador USB-C reforzado 25 W', sku: 'CAR-25W-01', barcode: '7709001001028', price: 49000, cost: 28000, stock: 12, min: 3, category: 'Cargadores', image: 'https://storage.googleapis.com/bpv/charger-usb-cable-type-c-white-isolated-background.exact1600w.jpg' },
   { id: 103, name: 'Vidrio templado Samsung A54', sku: 'VID-A54-01', barcode: '7709001001035', price: 15000, cost: 4200, stock: 18, min: 4, category: 'Protección', image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=640&q=82' },
   { id: 104, name: 'Audífonos Bluetooth AirBeat', sku: 'AUD-BT-01', barcode: '7709001001042', price: 78000, cost: 44000, stock: 8, min: 3, category: 'Audio', image: 'https://images.unsplash.com/photo-1640901821270-6e9c47fbdc07?auto=format&fit=crop&w=640&q=82' },
   { id: 105, name: 'Funda antigolpes iPhone 13', sku: 'FUN-IP13-01', barcode: '7709001001059', price: 32000, cost: 14500, stock: 15, min: 4, category: 'Fundas', image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=640&q=82' },
@@ -81,7 +81,9 @@ async function seedDemoData() {
       // sin tocar precios, existencias ni ventas que el visitante haya usado.
       const hydratedProducts = savedProducts.map((product: any) => {
         const example = demoProducts.find(item => item.id === Number(product.id));
-        return example && !String(product.image || '').trim() ? { ...product, image: example.image } : product;
+        const isUpdatedCharger = Number(product.id) === 102;
+        if (!example || (String(product.image || '').trim() && !isUpdatedCharger)) return product;
+        return { ...product, image: example.image, ...(isUpdatedCharger ? { name: example.name } : {}) };
       });
       if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts)) await db.prepare('UPDATE pos_business_state SET products=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),now(),businessId).run();
     }
