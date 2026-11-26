@@ -86,8 +86,14 @@ async function seedDemoData() {
       const categories = [...new Set(hydratedProducts.map((product: any) => String(product.category || '').trim()).filter(Boolean))].sort();
       if (JSON.stringify(hydratedProducts) !== JSON.stringify(savedProducts) || hydratedSales.length !== JSON.parse(state?.sales || '[]').length) await db.prepare('UPDATE pos_business_state SET products=?,sales=?,categories=?,updated_at=? WHERE business_id=?').bind(JSON.stringify(hydratedProducts),JSON.stringify(hydratedSales),JSON.stringify(categories),now(),businessId).run();
     }
-    const shift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
-    if (!shift) await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',200000,87000,97000,47000,4,6,0,0,?)").bind(businessId,now()).run();
+    const shift = await db.prepare("SELECT id,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
+    if (!shift) {
+      await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',100000,87000,19000,47000,3,5,0,0,?)").bind(businessId,now()).run();
+    } else if (Number(shift.sales_count || 0) === 0 && Number(shift.cash_sales || 0) === 0 && Number(shift.card_sales || 0) === 0 && Number(shift.transfer_sales || 0) === 0 && Number(shift.cash_entries || 0) === 0 && Number(shift.cash_outs || 0) === 0) {
+      // Corrige el turno de la demostración creado antes de que las ventas
+      // simuladas alimentaran la caja. Luego no se toca si un visitante vende.
+      await db.prepare('UPDATE pos_cash_shifts SET opening_amount=100000,cash_sales=87000,card_sales=19000,transfer_sales=47000,sales_count=3,units_sold=5 WHERE id=?').bind(shift.id).run();
+    }
     const examples = [
       ['OS-001','Laura Gómez','300 555 0101','1020304050','Celular','Samsung','Galaxy A54','IMEI 351234567890123','Pantalla quebrada y marco con golpes','Pantalla quebrada y sin respuesta táctil','Cambio de módulo de pantalla','Reparado / listo para entregar',285000,85000,285000],
       ['OS-002','Andrés Ruiz','300 555 0102','1010101010','Computador portátil','Lenovo','IdeaPad 3','Serial PF-4J22AB','No enciende, incluye cargador','No enciende después de una actualización','Diagnóstico de encendido','Esperando respuesta del cliente',0,0,0],
