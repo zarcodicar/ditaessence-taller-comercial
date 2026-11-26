@@ -87,19 +87,26 @@ async function seedDemoData() {
     }
     const shift = await db.prepare("SELECT id FROM pos_cash_shifts WHERE business_id=? AND status='open' LIMIT 1").bind(businessId).first<any>();
     if (!shift) await db.prepare("INSERT INTO pos_cash_shifts (business_id,status,opened_by_user_id,opened_by_name,opening_amount,cash_sales,card_sales,transfer_sales,sales_count,units_sold,cash_entries,cash_outs,opened_at) VALUES (?,'open',1,'Demostración',200000,87000,97000,47000,4,6,0,0,?)").bind(businessId,now()).run();
+    const examples = [
+      ['OS-001','Laura Gómez','300 555 0101','1020304050','Celular','Samsung','Galaxy A54','IMEI 351234567890123','Pantalla quebrada y marco con golpes','Pantalla quebrada y sin respuesta táctil','Cambio de módulo de pantalla','Reparado / listo para entregar',285000,85000,285000],
+      ['OS-002','Andrés Ruiz','300 555 0102','1010101010','Computador portátil','Lenovo','IdeaPad 3','Serial PF-4J22AB','No enciende, incluye cargador','No enciende después de una actualización','Diagnóstico de encendido','Esperando respuesta del cliente',0,0,0],
+      ['OS-003','Camila Torres','300 555 0103','1030303030','Tablet','Apple','iPad 9ª generación','Serial F9G7X22PQL','Pantalla con líneas verticales','Pantalla con líneas verticales y toque intermitente','Revisión de display','Recibido',0,0,0],
+      ['OS-004','Miguel Díaz','300 555 0104','1040404040','Consola','Sony','PlayStation 5','Serial PS5-883920','No lee discos','La consola no reconoce discos físicos','Limpieza y ajuste de lector','Entregado',160000,35000,160000],
+    ];
     const orders = await db.prepare('SELECT COUNT(*) AS count FROM pos_service_orders WHERE business_id=?').bind(businessId).first<any>();
     if (Number(orders?.count || 0) === 0) {
-      const examples = [
-        ['OS-001','Laura Gómez','300 555 0101','1020304050','Celular','Samsung','Galaxy A54','IMEI 351234567890123','Pantalla quebrada y marco con golpes','Cambio de módulo de pantalla','Reparado / listo para entregar',285000,85000,285000],
-        ['OS-002','Andrés Ruiz','300 555 0102','1010101010','Computador portátil','Lenovo','IdeaPad 3','Serial PF-4J22AB','No enciende, incluye cargador','Diagnóstico de encendido','Esperando respuesta del cliente',0,0,0],
-        ['OS-003','Camila Torres','300 555 0103','1030303030','Tablet','Apple','iPad 9ª generación','Serial F9G7X22PQL','Pantalla con líneas verticales','Revisión de display','Recibido',0,0,0],
-        ['OS-004','Miguel Díaz','300 555 0104','1040404040','Consola','Sony','PlayStation 5','Serial PS5-883920','No lee discos','Limpieza y ajuste de lector','Entregado',160000,35000,160000],
-      ];
       for (const item of examples) {
         const createdAt = now();
         const [orderNumber, customerName, customerPhone, customerDocument, deviceType, deviceBrand, deviceModel, deviceIdentifier, physicalCondition, reportedIssue, plannedService, status, estimatedTotal, partsCost, finalTotal] = item;
         const created = await db.prepare("INSERT INTO pos_service_orders (business_id,order_number,customer_name,customer_phone,customer_document,device_type,device_brand,device_model,device_identifier,physical_condition,reported_issue,planned_service,status,estimated_total,parts_cost,final_total,created_by_user_id,created_by_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id").bind(businessId,String(orderNumber || ''),String(customerName || ''),String(customerPhone || ''),String(customerDocument || ''),String(deviceType || 'Otro'),String(deviceBrand || ''),String(deviceModel || ''),String(deviceIdentifier || ''),String(physicalCondition || ''),String(reportedIssue || ''),String(plannedService || ''),String(status || 'Recibido'),Number(estimatedTotal || 0),Number(partsCost || 0),Number(finalTotal || 0),1,'Demostración',createdAt,createdAt).run();
       }
+    }
+    // Corrige únicamente la primera siembra publicada con columnas cruzadas.
+    // No toca órdenes que un visitante ya haya trabajado con estados válidos.
+    for (const item of examples) {
+      const orderNumber = String(item[0]), physicalCondition = String(item[8]), reportedIssue = String(item[9]), plannedService = String(item[10]), status = String(item[11]);
+      const estimatedTotal = Number(item[12]), partsCost = Number(item[13]), finalTotal = Number(item[14]);
+      await db.prepare("UPDATE pos_service_orders SET physical_condition=?,reported_issue=?,planned_service=?,status=?,estimated_total=?,parts_cost=?,final_total=?,updated_at=? WHERE business_id=? AND order_number=? AND status NOT IN ('Recibido','Esperando respuesta del cliente','Reparado / listo para entregar','Entregado','Sin reparación')").bind(physicalCondition,reportedIssue,plannedService,status,estimatedTotal,partsCost,finalTotal,now(),businessId,orderNumber).run();
     }
     let demoStep = 'técnicos';
     try {
