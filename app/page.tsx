@@ -101,12 +101,13 @@ export default function Home() {
   }, []);
   useEffect(() => {
     const cached = localValue<any>(OFFLINE_SNAPSHOT, null);
+    const requestedBusinessCode = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('business')?.trim() || '';
     const openSession = isDemo
       ? fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'demo-login' }) })
       : Promise.resolve();
     openSession.then(response => {
       if (response && !response.ok) throw new Error('No fue posible abrir la demostración');
-      return fetch('/api/auth', { cache: 'no-store' });
+      return fetch(`/api/auth${requestedBusinessCode ? `?business=${encodeURIComponent(requestedBusinessCode)}` : ''}`, { cache: 'no-store' });
     }).then(async response => {
       if (!response.ok) throw new Error('Sin conexión');
       return response.json();

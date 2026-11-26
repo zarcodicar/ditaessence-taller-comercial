@@ -315,8 +315,20 @@ async function activeCashShift(user: any) {
 export async function GET(request: Request) {
   await tables();
   const count = await env.DB.prepare('SELECT COUNT(*) as count FROM pos_users').first<{ count: number }>();
-  const user = await current(request);
   const url = new URL(request.url);
+  const requestedBusinessCode = String(url.searchParams.get('business') || '').trim().toUpperCase();
+  let user = await current(request);
+  let clearMismatchedSession = false;
+  // Una sesión de demostración o de otro negocio nunca puede reutilizarse al
+  // abrir la URL de un cliente. El enlace determina el negocio y obliga a
+  // iniciar sesión allí cuando la cookie actual pertenece a otro espacio.
+  if (requestedBusinessCode && user) {
+    const requestedBusiness = await env.DB.prepare("SELECT id FROM pos_businesses WHERE code=? AND status='active'").bind(requestedBusinessCode).first<any>();
+    if (requestedBusiness && Number(requestedBusiness.id) !== Number(user.businessId)) {
+      user = null;
+      clearMismatchedSession = true;
+    }
+  }
   if(url.searchParams.get('resource')==='service-photos'){
     if(!user||!canUseServices(user))return json({error:'Sin permiso.'},403);
     const rows=await env.DB.prepare('SELECT image FROM pos_service_photos WHERE business_id=? AND order_id=? ORDER BY id').bind(user.businessId,Number(url.searchParams.get('orderId'))).all<any>();
@@ -468,7 +480,7 @@ export async function GET(request: Request) {
   const workers = user?.role === 'owner' ? await env.DB.prepare("SELECT id, name, username, role, permissions FROM pos_users WHERE business_id=? AND role='worker' ORDER BY name").bind(user.businessId).all<any>() : null;
   const notifications = user?.role === 'owner' ? await env.DB.prepare('SELECT * FROM pos_notifications WHERE business_id=? ORDER BY id DESC LIMIT 200').bind(user.businessId).all<any>() : null;
   const state = user ? await env.DB.prepare('SELECT products, sales, categories, receipt_settings, category_catalog_version, updated_at FROM pos_business_state WHERE business_id=?').bind(user.businessId).first<any>() : null;
-  return json({ initialized: Number(count?.count || 0) > 0, setupProtected: Boolean(SETUP_TOKEN), user, workers: workers?.results.map(worker => ({ ...worker, permissions: JSON.parse(worker.permissions || '[]') })) || [], notifications: notifications?.results || [], cashShift: await activeCashShift(user), businessState: state ? { products: JSON.parse(state.products || '[]'), sales: JSON.parse(state.sales || '[]'), categories: Number(state.category_catalog_version || 0) >= 1 ? JSON.parse(state.categories || '[]') : [], receiptSettings: receiptSettings(JSON.parse(state.receipt_settings || '{}')), updatedAt: state.updated_at } : null });
+  return json({ initialized: Number(count?.count || 0) > 0, setupProtected: Boolean(SETUP_TOKEN), user, workers: workers?.results.map(worker => ({ ...worker, permissions: JSON.parse(worker.permissions || '[]') })) || [], notifications: notifications?.results || [], cashShift: await activeCashShift(user), businessState: state ? { products: JSON.parse(state.products || '[]'), sales: JSON.parse(state.sales || '[]'), categories: Number(state.category_catalog_version || 0) >= 1 ? JSON.parse(state.categories || '[]') : [], receiptSettings: receiptSettings(JSON.parse(state.receipt_settings || '{}')), updatedAt: state.updated_at } : null }, 200, clearMismatchedSession ? { 'Set-Cookie': `${SESSION}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0` } : {});
 }
 export async function POST(request: Request) {
   try {
