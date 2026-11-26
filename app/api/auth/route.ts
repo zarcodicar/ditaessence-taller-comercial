@@ -698,10 +698,10 @@ export async function POST(request: Request) {
   if (data.action === 'assign-service-technician') {
     const actor = await current(request); if (!actor || !canUseServices(actor)) return json({ error: 'No tienes permiso para asignar técnicos.' }, 403);
     const orderId = Number(data.orderId), technicianId = Number(data.technicianUserId);
-    const technician = await env.DB.prepare("SELECT id,name FROM pos_employees WHERE id=? AND is_technician=1 AND active=1").bind(technicianId).first<any>(); if (!technician) return json({ error: 'Selecciona un técnico válido.' }, 400);
-    const order = await env.DB.prepare('SELECT order_number,commission_status FROM pos_service_orders WHERE id=?').bind(orderId).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
+    const technician = await env.DB.prepare("SELECT id,name FROM pos_employees WHERE business_id=? AND id=? AND is_technician=1 AND active=1").bind(actor.businessId,technicianId).first<any>(); if (!technician) return json({ error: 'Selecciona un técnico válido.' }, 400);
+    const order = await env.DB.prepare('SELECT order_number,commission_status FROM pos_service_orders WHERE business_id=? AND id=?').bind(actor.businessId,orderId).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
     if (['pending','paid'].includes(order.commission_status)) return json({ error: 'La orden ya fue liquidada y no permite cambiar el técnico.' }, 409);
-    const changedAt=now(); await env.DB.batch([env.DB.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_status='not_applicable',updated_at=? WHERE id=?").bind(technician.id,technician.name,changedAt,orderId),env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,note,actor_name,created_at) VALUES (?,'Asignación',?,?,?)").bind(orderId,`Técnico asignado: ${technician.name}.`,actor.name,changedAt)]);
+    const changedAt=now(); await env.DB.batch([env.DB.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_status='not_applicable',updated_at=? WHERE business_id=? AND id=?").bind(technician.id,technician.name,changedAt,actor.businessId,orderId),env.DB.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,note,actor_name,created_at) VALUES (? ,?,'Asignación',?,?,?)").bind(actor.businessId,orderId,`Técnico asignado: ${technician.name}.`,actor.name,changedAt)]);
     return json({ ok: true });
   }
   if (data.action === 'save-service-technician-commission') {
@@ -745,11 +745,11 @@ export async function POST(request: Request) {
     if(data.markReady===true&&finalTotal<=0)return json({error:'Registra el valor final real antes de dejar el equipo listo.'},400);
     const changedAt=now();
     await env.DB.batch([
-      env.DB.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_status='not_applicable',diagnosis=?,technical_report=?,parts_used=?,repair_completed_at=CASE WHEN ?=1 THEN ? ELSE repair_completed_at END,final_total=?,parts_cost=?,updated_at=? WHERE id=?").bind(technician.id,technician.name,diagnosis,report,parts,data.markReady===true?1:0,changedAt,finalTotal,partsCost,changedAt,id),
-      env.DB.prepare('DELETE FROM pos_service_parts WHERE order_id=?').bind(id),
-      ...suppliedParts.map((item:any)=>env.DB.prepare('INSERT INTO pos_service_parts (order_id,amount,payment_method,supplier,note,actor_name,created_at) VALUES (?,?,?,?,?,?,?)').bind(id,item.amount,item.paymentMethod,item.supplier,item.note,actor.name,changedAt)),
-      env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,note,actor_name,created_at) VALUES (?,'Proceso técnico',?,?,?)").bind(id,`${technician.name} tomó la orden y registró la reparación terminada. La comisión queda pendiente hasta la entrega al cliente.`,actor.name,changedAt),
-      ...(data.markReady===true?[env.DB.prepare("UPDATE pos_service_orders SET status='Reparado / listo para entregar' WHERE id=?").bind(id),env.DB.prepare("INSERT INTO pos_service_order_events (order_id,event_type,to_status,note,actor_name,created_at) VALUES (?,'Cambio de estado','Reparado / listo para entregar',?,?,?)").bind(id,'Proceso técnico completado.',actor.name,changedAt)]:[]),
+      env.DB.prepare("UPDATE pos_service_orders SET technician_user_id=?,technician_name=?,commission_status='not_applicable',diagnosis=?,technical_report=?,parts_used=?,repair_completed_at=CASE WHEN ?=1 THEN ? ELSE repair_completed_at END,final_total=?,parts_cost=?,updated_at=? WHERE business_id=? AND id=?").bind(technician.id,technician.name,diagnosis,report,parts,data.markReady===true?1:0,changedAt,finalTotal,partsCost,changedAt,actor.businessId,id),
+      env.DB.prepare('DELETE FROM pos_service_parts WHERE business_id=? AND order_id=?').bind(actor.businessId,id),
+      ...suppliedParts.map((item:any)=>env.DB.prepare('INSERT INTO pos_service_parts (business_id,order_id,amount,payment_method,supplier,note,actor_name,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(actor.businessId,id,item.amount,item.paymentMethod,item.supplier,item.note,actor.name,changedAt)),
+      env.DB.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,note,actor_name,created_at) VALUES (? ,?,'Proceso técnico',?,?,?)").bind(actor.businessId,id,`${technician.name} tomó la orden y registró la reparación terminada. La comisión queda pendiente hasta la entrega al cliente.`,actor.name,changedAt),
+      ...(data.markReady===true?[env.DB.prepare("UPDATE pos_service_orders SET status='Reparado / listo para entregar' WHERE business_id=? AND id=?").bind(actor.businessId,id),env.DB.prepare("INSERT INTO pos_service_order_events (business_id,order_id,event_type,to_status,note,actor_name,created_at) VALUES (? ,?,'Cambio de estado','Reparado / listo para entregar',?,?,?)").bind(actor.businessId,id,'Proceso técnico completado.',actor.name,changedAt)]:[]),
     ]);
     return json({ ok:true });
   }
@@ -759,7 +759,7 @@ export async function POST(request: Request) {
     if (!Number.isInteger(id) || !serviceStatuses.includes(status)) return json({ error: 'Orden o estado no válido.' }, 400);
     if(status==='Reparado / listo para entregar')return json({error:'Completa el formulario de reparación para dejar el equipo listo.'},409);
     if (['Cancelado','Sin reparación'].includes(status) && !note) return json({ error: 'Debes explicar por qué la orden queda en ese estado.' }, 400);
-    const order = await env.DB.prepare('SELECT order_number,status,technician_user_id,technician_name,final_total,estimated_total,parts_cost,commission_status,COALESCE((SELECT SUM(amount) FROM pos_service_payments WHERE order_id=pos_service_orders.id),0) AS paid_total FROM pos_service_orders WHERE id=?').bind(id).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
+    const order = await env.DB.prepare('SELECT order_number,status,technician_user_id,technician_name,final_total,estimated_total,parts_cost,commission_status,COALESCE((SELECT SUM(amount) FROM pos_service_payments WHERE business_id=pos_service_orders.business_id AND order_id=pos_service_orders.id),0) AS paid_total FROM pos_service_orders WHERE business_id=? AND id=?').bind(actor.businessId,id).first<any>(); if (!order) return json({ error: 'No encontramos esa orden.' }, 404);
     if(status==='Entregado'&&order.status!=='Reparado / listo para entregar')return json({error:'Primero el técnico debe completar la reparación y dejar el equipo listo.'},409);
     const finalTotal = data.finalTotal == null || data.finalTotal === '' ? Number(order.final_total || 0) : Math.max(0, Math.round(Number(data.finalTotal) || 0));
     const deliveredPartsCost = data.partsCost == null || data.partsCost === '' ? Number(order.parts_cost || 0) : Math.max(0, Math.round(Number(data.partsCost) || 0));
